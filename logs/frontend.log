@@ -8,3 +8,25 @@
 
   ➜  Local:   http://localhost:9002/
   ➜  Network: http://192.168.100.6:9002/
+1:00:38 PM [vite] hmr update /src/App.vue, /src/App.vue?vue&type=style&index=0&scoped=7a7a37b1&lang.css
+1:00:39 PM [vite] Pre-transform error: Invalid end tag.
+1:00:39 PM [vite] Internal server error: Invalid end tag.
+  Plugin: vite:vue
+  File: /root/court-admin/frontend/src/views/Config.vue:79:11
+  77 |            <template #default="{ row }">
+  78 |              <el-button size="small" @click="editMinister(row)">编辑</el-button>
+  79 |            </el-template>
+     |             ^
+  80 |          </el-table-column>
+  81 |        </el-table>
+      at createCompilerError (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1378:17)
+      at emitError (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3014:5)
+      at Object.onclosetag (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:2391:9)
+      at Tokenizer.stateInClosingTagName (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:799:16)
+      at Tokenizer.parse (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1157:16)
+      at Object.baseParse (/root/court-admin/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3053:13)
+      at Object.parse (/root/court-admin/frontend/node_modules/@vue/compiler-dom/dist/compiler-dom.cjs.js:910:23)
+      at Object.parse$1 [as parse] (/root/court-admin/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1824:24)
+      at createDescriptor (/root/court-admin/frontend/node_modules/@vitejs/plugin-vue/dist/index.cjs:84:43)
+      at transformMain (/root/court-admin/frontend/node_modules/@vitejs/plugin-vue/dist/index.cjs:2434:34)
+1:01:12 PM [vite] hmr update /src/views/Dashboard.vue, /src/views/Dashboard.vue?vue&type=style&index=0&scoped=7f773d42&lang.css

@@ -1,138 +1,94 @@
 <template>
   <div id="app">
-    <el-container>
-      <!-- 左侧菜单 -->
-      <el-aside width="200px">
-        <div class="logo">
-          <h2>🏛️ 朝廷政务</h2>
-        </div>
-        <el-menu
-          :default-active="activeMenu"
-          router
-          background-color="#F5F7FA"
-          text-color="#303133"
-          active-text-color="#409EFF"
-        >
-          <el-menu-item index="/">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>📊 总览</span>
-          </el-menu-item>
-          <el-menu-item index="/ministers">
-            <el-icon><User /></el-icon>
-            <span>👥 大臣</span>
-          </el-menu-item>
-          <el-menu-item index="/tasks">
-            <el-icon><Document /></el-icon>
-            <span>📋 任务</span>
-          </el-menu-item>
-          <el-menu-item index="/flows">
-            <el-icon><Connection /></el-icon>
-            <span>🔗 流转</span>
-          </el-menu-item>
-          <el-menu-item index="/stats">
-            <el-icon><TrendCharts /></el-icon>
-            <span>📈 报表</span>
-          </el-menu-item>
-          <el-menu-item index="/config">
-            <el-icon><Setting /></el-icon>
-            <span>⚙️ 配置</span>
-          </el-menu-item>
-        </el-menu>
-      </el-aside>
-
-      <!-- 右侧内容 -->
-      <el-container>
-        <!-- 顶部栏 -->
-        <el-header>
-          <div class="header-content">
-            <h3>朝廷政务管理系统</h3>
-            <div class="user-info">
-              <el-avatar :size="32" icon="User" />
-              <span>皇上</span>
-              <el-button type="danger" size="small" @click="logout">退出</el-button>
-            </div>
+    <div class="app-container">
+      <!-- 头部导航 -->
+      <header class="app-header">
+        <div class="header-left">
+          <div>
+            <div class="app-logo">🏛️ 朝廷政务管理系统</div>
+            <div class="app-subtitle">Court Administration System</div>
           </div>
-        </el-header>
+        </div>
+        <div class="header-right">
+          <span class="status-chip ok">✅ 系统正常</span>
+          <span class="status-chip">{{ taskCount }} 任务</span>
+          <button class="icon-btn" @click="refresh" title="刷新">
+            <el-icon><Refresh /></el-icon>
+          </button>
+          <el-avatar :size="32" icon="User" style="cursor: pointer" />
+        </div>
+      </header>
 
-        <!-- 主内容区 -->
-        <el-main>
-          <router-view />
-        </el-main>
-      </el-container>
-    </el-container>
+      <!-- 标签页导航 -->
+      <nav class="tab-nav">
+        <div
+          v-for="tab in tabs"
+          :key="tab.key"
+          class="tab-item"
+          :class="{ active: activeTab === tab.key }"
+          @click="activeTab = tab.key"
+        >
+          <el-icon>{{ tab.icon }}</el-icon>
+          {{ tab.label }}
+          <span v-if="tab.badge" class="tab-badge">{{ tab.badge }}</span>
+        </div>
+      </nav>
+
+      <!-- 主内容区 -->
+      <main class="content-panel fade-in">
+        <component :is="currentComponent" />
+      </main>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { Refresh, DataAnalysis, User, Document, Connection, TrendCharts, Setting } from '@element-plus/icons-vue'
+import Dashboard from './views/Dashboard.vue'
+import Ministers from './views/Ministers.vue'
+import Tasks from './views/Tasks.vue'
+import Flows from './views/Flows.vue'
+import Stats from './views/Stats.vue'
+import Config from './views/Config.vue'
 
-const route = useRoute()
-const router = useRouter()
+const activeTab = ref('dashboard')
+const taskCount = ref(0)
 
-const activeMenu = computed(() => route.path)
+const tabs = [
+  { key: 'dashboard', label: '📊 总览', icon: DataAnalysis, badge: '' },
+  { key: 'ministers', label: '👥 大臣', icon: User, badge: '7' },
+  { key: 'tasks', label: '📋 任务', icon: Document, badge: '3' },
+  { key: 'flows', label: '🔗 流转', icon: Connection, badge: '' },
+  { key: 'stats', label: '📈 报表', icon: TrendCharts, badge: '' },
+  { key: 'config', label: '⚙️ 配置', icon: Setting, badge: '' }
+]
 
-const logout = () => {
-  // TODO: 实现退出登录
-  console.log('退出登录')
+const componentMap = {
+  dashboard: Dashboard,
+  ministers: Ministers,
+  tasks: Tasks,
+  flows: Flows,
+  stats: Stats,
+  config: Config
 }
+
+const currentComponent = computed(() => componentMap[activeTab.value])
+
+const refresh = () => {
+  // TODO: 实现刷新逻辑
+  console.log('刷新数据')
+}
+
+onMounted(() => {
+  // 模拟任务数量
+  taskCount.value = 238
+})
 </script>
 
 <style scoped>
 #app {
-  height: 100vh;
-}
-
-.el-container {
-  height: 100%;
-}
-
-.el-aside {
-  background-color: #F5F7FA;
-  border-right: 1px solid #E4E7ED;
-}
-
-.logo {
-  padding: 20px;
-  text-align: center;
-  border-bottom: 1px solid #E4E7ED;
-}
-
-.logo h2 {
-  margin: 0;
-  font-size: 18px;
-  color: #303133;
-}
-
-.el-header {
-  background-color: #FFFFFF;
-  border-bottom: 1px solid #E4E7ED;
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-}
-
-.header-content {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-content h3 {
-  margin: 0;
-  font-size: 16px;
-  color: #303133;
-}
-
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.el-main {
-  background-color: #F5F7FA;
-  padding: 20px;
+  min-height: 100vh;
+  background: var(--bg);
 }
 </style>
