@@ -1,17 +1,16 @@
 version: '3.8'
 
 services:
-  # MySQL 数据库
   mysql:
     image: mysql:8.0
     container_name: court-admin-mysql
     ports:
-      - "9003:3306"
+      - "${DOCKER_MYSQL_EXPOSE_PORT:-9003}:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: court_admin_root_2026
-      MYSQL_DATABASE: court_admin
-      MYSQL_USER: court_admin
-      MYSQL_PASSWORD: court_admin_2026
+      MYSQL_ROOT_PASSWORD: ${DOCKER_MYSQL_ROOT_PASSWORD:-change_me_root_password}
+      MYSQL_DATABASE: ${DOCKER_MYSQL_DATABASE:-court_admin}
+      MYSQL_USER: ${DOCKER_MYSQL_USER:-court_admin}
+      MYSQL_PASSWORD: ${DOCKER_MYSQL_PASSWORD:-change_me_db_password}
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -19,16 +18,19 @@ services:
       - court-admin
     restart: unless-stopped
 
-  # 后端服务
   backend:
     build: ./backend
     container_name: court-admin-backend
     ports:
-      - "9001:8000"
+      - "${BACKEND_PORT:-9001}:8000"
     environment:
-      DATABASE_URL: mysql+pymysql://court_admin:court_admin_2026@mysql:3306/court_admin
-      OPENCLAW_CONFIG_PATH: /root/.openclaw/openclaw.json
-      BACKUP_DIR: /app/data/backups
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-mysql+pymysql://court_admin:change_me_db_password@mysql:3306/court_admin?charset=utf8mb4}
+      OPENCLAW_CONFIG_PATH: ${OPENCLAW_CONFIG_PATH:-/root/.openclaw/openclaw.json}
+      BACKUP_DIR: ${BACKUP_DIR:-/app/data/backups}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:9002,http://127.0.0.1:9002}
+      CONFIG_ADMIN_TOKEN: ${CONFIG_ADMIN_TOKEN:-}
+      ENABLE_RELOAD_COMMAND: ${ENABLE_RELOAD_COMMAND:-true}
+      OPENCLAW_RELOAD_COMMAND: ${OPENCLAW_RELOAD_COMMAND:-openclaw gateway restart}
     volumes:
       - ./backend/app:/app/app
       - ./data:/app/data
@@ -39,19 +41,17 @@ services:
       - court-admin
     restart: unless-stopped
 
-  # 前端服务
   frontend:
     build: ./frontend
     container_name: court-admin-frontend
     ports:
-      - "9002:80"
+      - "${FRONTEND_PORT:-9002}:80"
     depends_on:
       - backend
     networks:
       - court-admin
     restart: unless-stopped
 
-  # Nginx 反向代理（生产环境使用）
   nginx:
     image: nginx:alpine
     container_name: court-admin-nginx

@@ -255,7 +255,8 @@ echo "  启动后端服务..."
 source /root/court-admin/backend/venv/bin/activate
 
 # 设置环境变量
-export DATABASE_URL="${DATABASE_URL:-mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}}"
+# 为避免 .env 中遗留 DATABASE_URL（如 localhost）导致连接失败，这里统一按 MYSQL_* 组装
+export DATABASE_URL="mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}?charset=utf8mb4"
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-/root/.openclaw/openclaw.json}"
 export BACKUP_DIR="${BACKUP_DIR:-/root/court-admin/data/backups}"
 

@@ -1,27 +1,37 @@
 import axios from 'axios'
 
+import { normalizeText } from '@/utils/text'
+
+let configAdminToken = localStorage.getItem('court_admin_config_token') || ''
+
+export const setConfigAdminToken = (token) => {
+  configAdminToken = token || ''
+  if (token) {
+    localStorage.setItem('court_admin_config_token', token)
+  } else {
+    localStorage.removeItem('court_admin_config_token')
+  }
+}
+
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000
+  timeout: 15000,
 })
 
-// 请求拦截器
 api.interceptors.request.use(
-  config => {
-    // TODO: 添加认证 token
+  (config) => {
+    if (config.url?.startsWith('/config') && configAdminToken) {
+      config.headers = config.headers || {}
+      config.headers['X-Admin-Token'] = configAdminToken
+    }
     return config
   },
-  error => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// 响应拦截器
 api.interceptors.response.use(
-  response => {
-    return response.data
-  },
-  error => {
+  (response) => normalizeText(response.data),
+  (error) => {
     console.error('API 错误:', error)
     return Promise.reject(error)
   }

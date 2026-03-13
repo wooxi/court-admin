@@ -1,196 +1,315 @@
 <template>
-  <div class="dashboard">
-    <!-- 统计卡片 -->
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-header">
-          <div class="stat-label">大臣数量</div>
-          <div class="stat-icon primary">
-            <el-icon :size="24"><User /></el-icon>
-          </div>
-        </div>
-        <div class="stat-value">{{ stats.ministers }}</div>
-        <div class="stat-trend up">
-          <el-icon><Top /></el-icon>
-          <span>较上周 +2</span>
-        </div>
+  <div class="dashboard-page">
+    <div class="page-header">
+      <div>
+        <h1>📊 朝廷总览</h1>
+        <p class="subtitle">一屏看清任务态势、执行效率与待办压力</p>
       </div>
-
-      <div class="stat-card">
-        <div class="stat-header">
-          <div class="stat-label">任务总数</div>
-          <div class="stat-icon success">
-            <el-icon :size="24"><Document /></el-icon>
-          </div>
-        </div>
-        <div class="stat-value">{{ stats.tasks }}</div>
-        <div class="stat-trend up">
-          <el-icon><Top /></el-icon>
-          <span>较上周 +15</span>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-header">
-          <div class="stat-label">Token 用量</div>
-          <div class="stat-icon warning">
-            <el-icon :size="24"><TrendCharts /></el-icon>
-          </div>
-        </div>
-        <div class="stat-value">{{ stats.tokens }}</div>
-        <div class="stat-trend down">
-          <el-icon><Bottom /></el-icon>
-          <span>较上周 -5%</span>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-header">
-          <div class="stat-label">完成率</div>
-          <div class="stat-icon danger">
-            <el-icon :size="24"><CircleCheck /></el-icon>
-          </div>
-        </div>
-        <div class="stat-value">{{ stats.completionRate }}%</div>
-        <div class="stat-trend up">
-          <el-icon><Top /></el-icon>
-          <span>较上周 +3.2%</span>
-        </div>
-      </div>
+      <el-button type="primary" @click="loadDashboard">
+        <el-icon><Refresh /></el-icon>
+        刷新数据
+      </el-button>
     </div>
 
-    <!-- 快捷操作 -->
-    <div class="content-panel">
-      <div class="panel-header">
-        <div class="panel-title">⚡ 快捷操作</div>
-      </div>
-      <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-        <el-button type="primary" @click="$router.push('/tasks')">
-          <el-icon><Plus /></el-icon>
-          创建任务
-        </el-button>
-        <el-button type="success" @click="$router.push('/ministers')">
-          <el-icon><User /></el-icon>
-          大臣配置
-        </el-button>
-        <el-button type="warning" @click="$router.push('/stats')">
-          <el-icon><TrendCharts /></el-icon>
-          查看报表
-        </el-button>
-        <el-button type="info" @click="$router.push('/config')">
-          <el-icon><Setting /></el-icon>
-          系统配置
-        </el-button>
-      </div>
+    <div class="kpi-grid">
+      <el-card class="kpi-card" shadow="hover">
+        <div class="kpi-top">
+          <span>在编大臣</span>
+          <el-icon class="kpi-icon"><User /></el-icon>
+        </div>
+        <div class="kpi-value">{{ kpi.ministers }}</div>
+      </el-card>
+
+      <el-card class="kpi-card" shadow="hover">
+        <div class="kpi-top">
+          <span>进行中任务</span>
+          <el-icon class="kpi-icon"><Connection /></el-icon>
+        </div>
+        <div class="kpi-value warn">{{ kpi.processing }}</div>
+      </el-card>
+
+      <el-card class="kpi-card" shadow="hover">
+        <div class="kpi-top">
+          <span>已完成任务（30天）</span>
+          <el-icon class="kpi-icon"><CircleCheck /></el-icon>
+        </div>
+        <div class="kpi-value ok">{{ kpi.completed }}</div>
+      </el-card>
+
+      <el-card class="kpi-card" shadow="hover">
+        <div class="kpi-top">
+          <span>完成率（30天）</span>
+          <el-icon class="kpi-icon"><TrendCharts /></el-icon>
+        </div>
+        <div class="kpi-value">{{ kpi.completionRate }}%</div>
+      </el-card>
     </div>
 
-    <!-- 最近任务 -->
-    <div class="content-panel">
-      <div class="panel-header">
-        <div class="panel-title">📋 最近任务</div>
-        <el-button type="primary" link @click="$router.push('/tasks')">
-          查看全部 <el-icon><ArrowRight /></el-icon>
-        </el-button>
-      </div>
-      <el-table :data="recentTasks" stripe style="width: 100%">
-        <el-table-column prop="task_id" label="任务 ID" width="160" />
-        <el-table-column prop="title" label="任务标题" />
-        <el-table-column prop="status" label="状态" width="100">
+    <div class="main-grid">
+      <el-card class="panel" shadow="never">
+        <template #header>
+          <div class="panel-header">
+            <span>🔥 当前待办（未完成）</span>
+            <el-button text @click="goTo('/tasks')">进入任务页</el-button>
+          </div>
+        </template>
+
+        <el-empty v-if="openTasks.length === 0" description="当前无未完成任务" />
+
+        <div v-else class="open-task-list">
+          <div v-for="task in openTasks" :key="task.id" class="open-task-item">
+            <div class="open-task-title">{{ task.title }}</div>
+            <div class="open-task-meta">
+              <el-tag :type="getStatusType(task.status)" size="small">{{ getStatusText(task.status) }}</el-tag>
+              <span>{{ task.task_id }}</span>
+              <span>{{ getAssignee(task.assignee_id) }}</span>
+              <span>{{ formatDate(task.created_at) }}</span>
+            </div>
+          </div>
+        </div>
+      </el-card>
+
+      <el-card class="panel" shadow="never">
+        <template #header>
+          <div class="panel-header">
+            <span>🏛️ 各部执行概览（30天）</span>
+            <el-button text @click="goTo('/stats')">查看报表</el-button>
+          </div>
+        </template>
+
+        <el-table :data="deptStats" size="small" stripe>
+          <el-table-column prop="name" label="大臣" min-width="100" />
+          <el-table-column prop="total" label="总任务" width="90" />
+          <el-table-column prop="processing" label="进行中" width="90" />
+          <el-table-column prop="pending" label="待处理" width="90" />
+          <el-table-column prop="completion_rate" label="完成率" min-width="130">
+            <template #default="{ row }">{{ row.completion_rate }}%</template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </div>
+
+    <el-card class="panel" shadow="never">
+      <template #header>
+        <div class="panel-header">
+          <span>🕒 最近任务（最新 8 条）</span>
+          <div class="quick-actions">
+            <el-button size="small" @click="goTo('/tasks')"><el-icon><Document /></el-icon>任务管理</el-button>
+            <el-button size="small" @click="goTo('/flows')"><el-icon><Timer /></el-icon>流转追踪</el-button>
+            <el-button size="small" @click="goTo('/config')"><el-icon><Setting /></el-icon>系统配置</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="recentTasks" stripe>
+        <el-table-column prop="task_id" label="任务 ID" width="190" />
+        <el-table-column prop="title" label="标题" min-width="240" />
+        <el-table-column prop="assignee_name" label="承办" width="120" />
+        <el-table-column prop="status" label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)" size="small">
-              {{ getStatusText(row.status) }}
-            </el-tag>
+            <el-tag :type="getStatusType(row.status)" size="small">{{ getStatusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="assignee" label="承办大臣" width="100" />
-        <el-table-column prop="created_at" label="创建时间" width="180" />
-        <el-table-column label="操作" width="120" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="viewTask(row)">查看</el-button>
-          </template>
+        <el-table-column prop="created_at" label="创建时间" width="180">
+          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
       </el-table>
-    </div>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  User, Document, TrendCharts, CircleCheck, Top, Bottom,
-  Plus, ArrowRight, Setting
-} from '@element-plus/icons-vue'
+
+import api from '@/api'
 
 const router = useRouter()
 
-const stats = ref({
-  ministers: 7,
-  tasks: 238,
-  tokens: '446k',
-  completionRate: 86.1
+const ministers = ref([])
+const tasks = ref([])
+const taskStats = ref([])
+
+const kpi = ref({
+  ministers: 0,
+  processing: 0,
+  completed: 0,
+  completionRate: 0,
 })
 
-const recentTasks = ref([
-  {
-    task_id: 'TASK-20260310-001',
-    title: '全面审查三省六部项目健康度',
-    status: 'completed',
-    assignee: '兵部',
-    created_at: '2026-03-10 05:20'
-  },
-  {
-    task_id: 'TASK-20260310-002',
-    title: '调研工业数据大模型应用',
-    status: 'processing',
-    assignee: '户部',
-    created_at: '2026-03-10 05:25'
-  },
-  {
-    task_id: 'TASK-20260310-003',
-    title: '撰写 OpenClaw 技术博客',
-    status: 'pending',
-    assignee: '礼部',
-    created_at: '2026-03-10 05:30'
-  }
-])
+const ministerMap = computed(() => {
+  const map = {}
+  ministers.value.forEach((m) => {
+    map[m.id] = m.name
+  })
+  return map
+})
 
-const getStatusType = (status) => {
-  const map = {
-    pending: 'info',
-    processing: 'warning',
-    completed: 'success'
+const openTasks = computed(() => tasks.value.filter((t) => t.status !== 'completed'))
+
+const recentTasks = computed(() =>
+  tasks.value.slice(0, 8).map((task) => ({
+    ...task,
+    assignee_name: ministerMap.value[task.assignee_id] || `#${task.assignee_id}`,
+  }))
+)
+
+const deptStats = computed(() => taskStats.value.slice(0, 10))
+
+const getAssignee = (id) => ministerMap.value[id] || `#${id}`
+const getStatusType = (status) => ({ pending: 'info', processing: 'warning', completed: 'success' }[status] || 'info')
+const getStatusText = (status) => ({ pending: '待处理', processing: '进行中', completed: '已完成' }[status] || status)
+const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
+const goTo = (path) => router.push(path)
+
+const loadDashboard = async () => {
+  const [ministerData, taskData, taskStatsData] = await Promise.all([
+    api.get('/ministers/'),
+    api.get('/tasks/', { params: { limit: 200 } }),
+    api.get('/stats/tasks', { params: { days: 30 } }),
+  ])
+
+  ministers.value = ministerData
+  tasks.value = taskData
+  taskStats.value = taskStatsData.by_minister || []
+
+  kpi.value = {
+    ministers: ministerData.length,
+    processing: taskData.filter((t) => t.status === 'processing').length,
+    completed: taskStatsData.total?.completed || 0,
+    completionRate: taskStatsData.total?.completion_rate || 0,
   }
-  return map[status] || 'info'
 }
 
-const getStatusText = (status) => {
-  const map = {
-    pending: '待处理',
-    processing: '进行中',
-    completed: '已完成'
-  }
-  return map[status] || status
-}
-
-const viewTask = (task) => {
-  router.push(`/tasks?id=${task.task_id}`)
-}
+onMounted(() => {
+  loadDashboard().catch((e) => {
+    console.error('加载总览失败', e)
+  })
+})
 </script>
 
 <style scoped>
-.dashboard {
-  animation: fadeIn 0.3s ease-out;
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.page-header h1 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.kpi-card {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.kpi-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.kpi-icon {
+  color: var(--acc);
+}
+
+.kpi-value {
+  margin-top: 8px;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.kpi-value.ok {
+  color: var(--ok);
+}
+
+.kpi-value.warn {
+  color: var(--warn);
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.panel {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.open-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.open-task-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--panel2);
+}
+
+.open-task-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.open-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 980px) {
+  .main-grid {
+    grid-template-columns: 1fr;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

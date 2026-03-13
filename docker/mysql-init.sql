@@ -1,5 +1,8 @@
 -- 朝廷政务管理系统数据库初始化脚本
 
+-- 修复数据库字符集（防止中文乱码）
+ALTER DATABASE court_admin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- 创建大臣配置表
 CREATE TABLE IF NOT EXISTS ministers (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -24,29 +27,28 @@ CREATE TABLE IF NOT EXISTS tasks (
     creator_id INT COMMENT '创建人 ID',
     assignee_id INT NOT NULL COMMENT '承办大臣 ID',
     dispatcher_id INT COMMENT '调度大臣 ID',
+    agent_session_key VARCHAR(128) NULL COMMENT '子会话标识（用于实时追踪）',
     status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态',
     priority VARCHAR(10) DEFAULT 'medium' COMMENT '优先级',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME NULL,
     INDEX idx_status (status),
     INDEX idx_assignee (assignee_id),
+    INDEX idx_agent_session_key (agent_session_key),
     INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务表';
 
 -- 创建任务流转表
 CREATE TABLE IF NOT EXISTS task_flows (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL COMMENT '任务 ID',
-    from_actor VARCHAR(50) NOT NULL COMMENT '发起方',
-    to_actor VARCHAR(50) NOT NULL COMMENT '接收方',
     action VARCHAR(100) NOT NULL COMMENT '动作类型',
-    remark TEXT COMMENT '备注',
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    metadata JSON COMMENT '扩展元数据',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    actor VARCHAR(50) NOT NULL COMMENT '操作人',
+    details JSON COMMENT '流转详情（分派信息、执行日志等）',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_task_id (task_id),
-    INDEX idx_timestamp (timestamp)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务流转表';
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='任务流转表';
 
 -- 创建 Token 用量表
 CREATE TABLE IF NOT EXISTS token_usage (

@@ -1,12 +1,14 @@
 """
 统计报表 API
 """
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from sqlalchemy.sql import func as sql_func
-from typing import List
+from __future__ import annotations
+
 from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import case, func, literal_column
+from sqlalchemy.orm import Session
+
 from app.models import get_db
 from app.models.minister import Minister
 from app.models.task import Task
@@ -14,170 +16,180 @@ from app.models.usage import TokenUsage
 
 router = APIRouter()
 
+
 @router.get("/token")
 async def get_token_stats(
-    days: int = 7,
-    db: Session = Depends(get_db)
+    days: int = Query(default=7, ge=1, le=365),
+    db: Session = Depends(get_db),
 ):
-    """
-    获取 Token 用量统计
-    
-    :param days: 统计天数（默认 7 天）
-    """
     start_date = date.today() - timedelta(days=days)
-    
-    # 按大臣统计
-    minister_stats = db.query(
-        Minister.name,
-        Minister.department,
-        sql_func.sum(TokenUsage.input_tokens).label("input_tokens"),
-        sql_func.sum(TokenUsage.output_tokens).label("output_tokens"),
-        sql_func.sum(TokenUsage.total_tokens).label("total_tokens")
-    ).join(TokenUsage).filter(
-        TokenUsage.usage_date >= start_date
-    ).group_by(Minister.id).all()
-    
-    # 总计
-    total_stats = db.query(
-        sql_func.sum(TokenUsage.input_tokens).label("input_tokens"),
-        sql_func.sum(TokenUsage.output_tokens).label("output_tokens"),
-        sql_func.sum(TokenUsage.total_tokens).label("total_tokens")
-    ).filter(TokenUsage.usage_date >= start_date).first()
-    
+
+    minister_stats = (
+        db.query(
+            Minister.name,
+            Minister.department,
+            func.coalesce(func.sum(TokenUsage.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(TokenUsage.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("total_tokens"),
+        )
+        .outerjoin(
+            TokenUsage,
+            (TokenUsage.minister_id == Minister.id) & (TokenUsage.usage_date >= start_date),
+        )
+        .group_by(Minister.id, Minister.name, Minister.department)
+        .order_by(Minister.id.asc())
+        .all()
+    )
+
+    total_stats = (
+        db.query(
+            func.coalesce(func.sum(TokenUsage.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(TokenUsage.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("total_tokens"),
+        )
+        .filter(TokenUsage.usage_date >= start_date)
+        .first()
+    )
+
     return {
         "period": {
             "start": start_date.isoformat(),
             "end": date.today().isoformat(),
-            "days": days
+            "days": days,
         },
         "total": {
-            "input_tokens": total_stats.input_tokens or 0,
-            "output_tokens": total_stats.output_tokens or 0,
-            "total_tokens": total_stats.total_tokens or 0
+            "input_tokens": int(total_stats.input_tokens or 0),
+            "output_tokens": int(total_stats.output_tokens or 0),
+            "total_tokens": int(total_stats.total_tokens or 0),
         },
         "by_minister": [
             {
                 "name": stat.name,
                 "department": stat.department,
-                "input_tokens": stat.input_tokens or 0,
-                "output_tokens": stat.output_tokens or 0,
-                "total_tokens": stat.total_tokens or 0
+                "input_tokens": int(stat.input_tokens or 0),
+                "output_tokens": int(stat.output_tokens or 0),
+                "total_tokens": int(stat.total_tokens or 0),
             }
             for stat in minister_stats
-        ]
+        ],
     }
+
 
 @router.get("/tasks")
 async def get_task_stats(
-    days: int = 30,
-    db: Session = Depends(get_db)
+    days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
 ):
-    """
-    获取任务统计
-    
-    :param days: 统计天数（默认 30 天）
-    """
     start_date = date.today() - timedelta(days=days)
-    
-    # 按大臣统计
-    minister_stats = db.query(
-        Minister.name,
-        Minister.department,
-        sql_func.count(Task.id).label("total"),
-        sql_func.sum(sql_func.if_(Task.status == "completed", 1, 0)).label("completed"),
-        sql_func.sum(sql_func.if_(Task.status == "processing", 1, 0)).label("processing"),
-        sql_func.sum(sql_func.if_(Task.status == "pending", 1, 0)).label("pending")
-    ).join(Task, Task.assignee_id == Minister.id).filter(
-        Task.created_at >= start_date
-    ).group_by(Minister.id).all()
-    
-    # 总体统计
-    total_stats = db.query(
-        sql_func.count(Task.id).label("total"),
-        sql_func.sum(sql_func.if_(Task.status == "completed", 1, 0)).label("completed"),
-        sql_func.sum(sql_func.if_(Task.status == "processing", 1, 0)).label("processing"),
-        sql_func.sum(sql_func.if_(Task.status == "pending", 1, 0)).label("pending")
-    ).filter(Task.created_at >= start_date).first()
-    
+
+    completed_case = case((Task.status == "completed", 1), else_=0)
+    processing_case = case((Task.status == "processing", 1), else_=0)
+    pending_case = case((Task.status == "pending", 1), else_=0)
+
+    minister_stats = (
+        db.query(
+            Minister.name,
+            Minister.department,
+            func.count(Task.id).label("total"),
+            func.coalesce(func.sum(completed_case), 0).label("completed"),
+            func.coalesce(func.sum(processing_case), 0).label("processing"),
+            func.coalesce(func.sum(pending_case), 0).label("pending"),
+        )
+        .outerjoin(Task, (Task.assignee_id == Minister.id) & (Task.created_at >= start_date))
+        .group_by(Minister.id, Minister.name, Minister.department)
+        .order_by(Minister.id.asc())
+        .all()
+    )
+
+    total_stats = (
+        db.query(
+            func.count(Task.id).label("total"),
+            func.coalesce(func.sum(completed_case), 0).label("completed"),
+            func.coalesce(func.sum(processing_case), 0).label("processing"),
+            func.coalesce(func.sum(pending_case), 0).label("pending"),
+        )
+        .filter(Task.created_at >= start_date)
+        .first()
+    )
+
+    total = int(total_stats.total or 0)
+    completed = int(total_stats.completed or 0)
+
     return {
         "period": {
             "start": start_date.isoformat(),
             "end": date.today().isoformat(),
-            "days": days
+            "days": days,
         },
         "total": {
-            "total": total_stats.total or 0,
-            "completed": total_stats.completed or 0,
-            "processing": total_stats.processing or 0,
-            "pending": total_stats.pending or 0,
-            "completion_rate": round(
-                (total_stats.completed or 0) / (total_stats.total or 1) * 100, 2
-            )
+            "total": total,
+            "completed": completed,
+            "processing": int(total_stats.processing or 0),
+            "pending": int(total_stats.pending or 0),
+            "completion_rate": round((completed / total * 100), 2) if total else 0,
         },
         "by_minister": [
             {
                 "name": stat.name,
                 "department": stat.department,
-                "total": stat.total or 0,
-                "completed": stat.completed or 0,
-                "processing": stat.processing or 0,
-                "pending": stat.pending or 0,
-                "completion_rate": round(
-                    (stat.completed or 0) / (stat.total or 1) * 100, 2
-                )
+                "total": int(stat.total or 0),
+                "completed": int(stat.completed or 0),
+                "processing": int(stat.processing or 0),
+                "pending": int(stat.pending or 0),
+                "completion_rate": round((int(stat.completed or 0) / int(stat.total or 0) * 100), 2)
+                if int(stat.total or 0)
+                else 0,
             }
             for stat in minister_stats
-        ]
+        ],
     }
+
 
 @router.get("/efficiency")
 async def get_efficiency_stats(
-    days: int = 30,
-    db: Session = Depends(get_db)
+    days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
 ):
-    """
-    获取效率统计（平均处理时长）
-    """
     start_date = date.today() - timedelta(days=days)
-    
-    # 查询已完成任务的处理时长
-    completed_tasks = db.query(Task).filter(
-        Task.status == "completed",
-        Task.completed_at != None,
-        Task.created_at >= start_date
-    ).all()
-    
-    # 按大臣分组计算平均时长
-    minister_durations = {}
-    for task in completed_tasks:
-        duration = (task.completed_at - task.created_at).total_seconds() / 3600  # 小时
-        minister_id = task.assignee_id
-        
-        if minister_id not in minister_durations:
-            minister_durations[minister_id] = []
-        minister_durations[minister_id].append(duration)
-    
-    # 计算平均值
-    efficiency_stats = []
-    for minister_id, durations in minister_durations.items():
-        minister = db.query(Minister).filter(Minister.id == minister_id).first()
-        avg_duration = sum(durations) / len(durations)
-        
-        efficiency_stats.append({
-            "minister_name": minister.name,
-            "department": minister.department,
-            "avg_hours": round(avg_duration, 2),
-            "completed_tasks": len(durations)
-        })
-    
-    # 按平均时长排序
-    efficiency_stats.sort(key=lambda x: x["avg_hours"])
-    
+
+    # 按大臣统计已完成任务平均耗时（小时）
+    # 这里 SECOND 需作为 SQL 关键字字面量，不能做绑定参数
+    seconds_diff = func.timestampdiff(literal_column("SECOND"), Task.created_at, Task.completed_at)
+    avg_hours = func.avg(seconds_diff / 3600.0)
+
+    rows = (
+        db.query(
+            Minister.id,
+            Minister.name,
+            Minister.department,
+            func.coalesce(avg_hours, 0).label("avg_hours"),
+            func.count(Task.id).label("completed_tasks"),
+        )
+        .join(Task, Task.assignee_id == Minister.id)
+        .filter(
+            Task.status == "completed",
+            Task.completed_at.isnot(None),
+            Task.created_at >= start_date,
+        )
+        .group_by(Minister.id, Minister.name, Minister.department)
+        .order_by(func.coalesce(avg_hours, 0).asc())
+        .all()
+    )
+
     return {
         "period": {
             "start": start_date.isoformat(),
             "end": date.today().isoformat(),
-            "days": days
+            "days": days,
         },
-        "efficiency_ranking": efficiency_stats
+        "efficiency_ranking": [
+            {
+                "minister_id": row.id,
+                "minister_name": row.name,
+                "department": row.department,
+                "avg_hours": round(float(row.avg_hours or 0), 2),
+                "completed_tasks": int(row.completed_tasks or 0),
+            }
+            for row in rows
+        ],
     }

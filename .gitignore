@@ -1,26 +1,66 @@
-# 依赖
-node_modules/
-venv/
-__pycache__/
-*.pyc
+# 朝廷政务系统 .gitignore
 
-# 环境配置（敏感信息）
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+.eslintcache
+
+# 环境变量（重要！）
 .env
+.env.local
+.env.*.local
 
 # 日志
 logs/
 *.log
+*.log.*
 
 # 数据
-data/backups/
-*.sql
+data/*.db
+data/*.sqlite
+data/backups/*.sql
+
+# OpenClaw 配置（敏感）
+/root/.openclaw/openclaw.json
+
+# 任务追踪（运行时生成）
+/root/clawd/silijian/memory/task_tracking.json
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
+*~
 
-# 系统文件
+# OS
 .DS_Store
 Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 测试
+coverage/
+.test_results/

@@ -5,29 +5,34 @@
       <el-button @click="$router.push('/tasks')">返回任务列表</el-button>
     </div>
 
-    <!-- 任务信息 -->
+    <el-alert
+      v-if="!taskCode"
+      title="请从任务列表进入流转页"
+      type="info"
+      show-icon
+      style="margin-bottom: 16px"
+    />
+
     <el-card v-if="task" style="margin-bottom: 20px;">
       <el-descriptions :column="2" border>
         <el-descriptions-item label="任务 ID">{{ task.task_id }}</el-descriptions-item>
         <el-descriptions-item label="状态">
-          <el-tag :type="getStatusType(task.status)">
-            {{ getStatusText(task.status) }}
-          </el-tag>
+          <el-tag :type="getStatusType(task.status)">{{ getStatusText(task.status) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="标题" :span="2">{{ task.title }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ task.created_at }}</el-descriptions-item>
-        <el-descriptions-item label="完成时间">{{ task.completed_at || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatTime(task.created_at) }}</el-descriptions-item>
+        <el-descriptions-item label="完成时间">{{ task.completed_at ? formatTime(task.completed_at) : '-' }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
-    <!-- 流转时间线 -->
-    <el-card>
+    <el-card v-loading="loading">
       <template #header>
         <div class="card-header">
           <span>⏱️ 流转时间线</span>
+          <el-button size="small" @click="loadTaskFlows">刷新</el-button>
         </div>
       </template>
-      
+
       <el-timeline>
         <el-timeline-item
           v-for="flow in flows"
@@ -48,74 +53,60 @@
               <div class="flow-remark" v-if="flow.remark">
                 <strong>备注：</strong>{{ flow.remark }}
               </div>
+              <el-collapse v-if="flow.metadata && Object.keys(flow.metadata).length">
+                <el-collapse-item title="元数据" name="1">
+                  <pre class="meta-block">{{ JSON.stringify(flow.metadata, null, 2) }}</pre>
+                </el-collapse-item>
+              </el-collapse>
             </div>
           </el-card>
         </el-timeline-item>
       </el-timeline>
 
-      <el-empty v-if="flows.length === 0" description="暂无流转记录" />
+      <el-empty v-if="!loading && flows.length === 0" description="暂无流转记录" />
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
+
 import api from '@/api'
 
 const route = useRoute()
+const loading = ref(false)
 const task = ref(null)
 const flows = ref([])
 
-const getStatusType = (status) => {
-  const map = {
-    pending: 'info',
-    processing: 'warning',
-    completed: 'success'
-  }
-  return map[status] || 'info'
-}
+const taskCode = computed(() => route.query.task_id)
 
-const getStatusText = (status) => {
-  const map = {
-    pending: '待处理',
-    processing: '进行中',
-    completed: '已完成'
-  }
-  return map[status] || status
-}
+const getStatusType = (status) => ({ pending: 'info', processing: 'warning', completed: 'success' }[status] || 'info')
+const getStatusText = (status) => ({ pending: '待处理', processing: '进行中', completed: '已完成' }[status] || status)
 
 const getActionType = (action) => {
-  if (action.includes('创建')) return 'primary'
-  if (action.includes('完成')) return 'success'
-  if (action.includes('调度') || action.includes('分派')) return 'warning'
+  if ((action || '').includes('创建')) return 'primary'
+  if ((action || '').includes('完成')) return 'success'
+  if ((action || '').includes('调度') || (action || '').includes('分派')) return 'warning'
   return 'info'
 }
 
-const formatTime = (time) => {
-  if (!time) return ''
-  return new Date(time).toLocaleString('zh-CN')
-}
+const formatTime = (time) => (time ? new Date(time).toLocaleString('zh-CN') : '-')
 
 const loadTaskFlows = async () => {
+  if (!taskCode.value) return
+
+  loading.value = true
   try {
-    const taskId = route.query.task_id
-    if (!taskId) return
-    
-    // 获取流转记录
-    const flowData = await api.get(`/flows/task/${taskId}`)
-    flows.value = flowData
-    
-    // TODO: 获取任务详情
-    task.value = {
-      task_id: `TASK-${taskId}`,
-      title: '任务标题',
-      status: 'processing',
-      created_at: '2026-03-10 05:20:00',
-      completed_at: null
-    }
+    const taskInfo = await api.get(`/tasks/by-code/${encodeURIComponent(taskCode.value)}`)
+    task.value = taskInfo
+    flows.value = await api.get(`/flows/task/${taskInfo.id}`)
   } catch (error) {
-    console.error('加载流转记录失败:', error)
+    ElMessage.error(error?.response?.data?.detail || '加载流转记录失败')
+    console.error(error)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -150,9 +141,16 @@ onMounted(() => {
 }
 
 .flow-remark {
-  background-color: #F5F7FA;
+  background-color: #f5f7fa;
   padding: 10px;
   border-radius: 4px;
   color: #606266;
+  margin-top: 8px;
+}
+
+.meta-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

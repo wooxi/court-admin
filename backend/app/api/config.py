@@ -1,213 +1,267 @@
 """
 OpenClaw 配置管理 API
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from __future__ import annotations
+
 import json
-import os
 import shutil
+import subprocess
 from datetime import datetime
-from typing import List, Optional
-from app.models import get_db
-from app.models.config_model import OpenClawConfig
-from pydantic import BaseModel
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from app.settings import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
-# OpenClaw 配置文件路径
-OPENCLAW_CONFIG_PATH = os.getenv(
-    "OPENCLAW_CONFIG_PATH",
-    "/root/.openclaw/openclaw.json"
-)
-
-# 备份目录
-BACKUP_DIR = os.getenv("BACKUP_DIR", "/root/court-admin/data/backups")
-
-class ConfigResponse(BaseModel):
-    config_key: str
-    config_value: dict
-    version: str
-    updated_at: datetime
 
 class ConfigUpdate(BaseModel):
-    config_key: str
+    config_key: str = "openclaw"
     config_value: dict
 
-@router.get("/")
-async def get_config(db: Session = Depends(get_db)):
+
+class RestoreRequest(BaseModel):
+    filename: str = Field(min_length=1)
+
+
+class ReloadRequest(BaseModel):
+    perform: bool = True
+    timeout_seconds: int = Field(default=20, ge=3, le=120)
+
+
+def require_admin_token(x_admin_token: Optional[str] = Header(default=None)):
     """
-    获取 OpenClaw 配置
-    
-    直接从配置文件读取，确保数据最新
+    若设置了 CONFIG_ADMIN_TOKEN，则要求请求头 X-Admin-Token 匹配。
     """
+    expected = settings.config_admin_token
+    if expected and x_admin_token != expected:
+        raise HTTPException(status_code=401, detail="管理员令牌无效")
+
+
+def _load_config() -> Dict[str, Any]:
+    path = settings.openclaw_config_path
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"配置文件不存在：{path}")
+
     try:
-        if not os.path.exists(OPENCLAW_CONFIG_PATH):
-            raise HTTPException(
-                status_code=404,
-                detail=f"配置文件不存在：{OPENCLAW_CONFIG_PATH}"
-            )
-        
-        with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
-        return {
-            "config_key": "openclaw",
-            "config_value": config,
-            "version": config.get("meta", {}).get("lastTouchedVersion", "unknown"),
-            "updated_at": config.get("meta", {}).get("lastTouchedAt", "unknown")
-        }
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"配置文件解析失败：{str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"读取配置失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"配置文件解析失败：{e}") from e
+
+
+def _save_config(config: Dict[str, Any]) -> None:
+    path = settings.openclaw_config_path
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def _create_backup() -> str:
+    backup_dir = settings.backup_dir
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"openclaw-backup-{timestamp}.json"
+    backup_path = backup_dir / filename
+
+    shutil.copy2(settings.openclaw_config_path, backup_path)
+    return str(backup_path)
+
+
+def _normalize_model_primary(raw_primary: str, config: Dict[str, Any]) -> str:
+    """
+    支持前端传裸 model id（如 qwen3.5-plus）或完整 provider/model（如 bailian/qwen3.5-plus）。
+    """
+    value = (raw_primary or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="model.primary 不能为空")
+
+    if "/" in value:
+        return value
+
+    providers = config.get("models", {}).get("providers", {})
+    for provider_name, provider_data in providers.items():
+        for model in provider_data.get("models", []):
+            if model.get("id") == value:
+                return f"{provider_name}/{value}"
+
+    raise HTTPException(status_code=400, detail=f"未找到模型：{value}，请使用 provider/model 格式")
+
+
+@router.get("/")
+async def get_config(_=Depends(require_admin_token)):
+    config = _load_config()
+    return {
+        "config_key": "openclaw",
+        "config_value": config,
+        "version": config.get("meta", {}).get("lastTouchedVersion", "unknown"),
+        "updated_at": config.get("meta", {}).get("lastTouchedAt", "unknown"),
+    }
+
 
 @router.get("/ministers")
-async def get_ministers_config(db: Session = Depends(get_db)):
-    """
-    获取大臣配置（从 openclaw.json 的 agents.list 提取）
-    """
-    try:
-        with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
-        agents = config.get("agents", {}).get("list", [])
-        
-        return {
-            "ministers": [
-                {
-                    "id": agent.get("id"),
-                    "name": agent.get("name"),
-                    "workspace": agent.get("workspace"),
-                    "model": agent.get("model"),
-                    "identity": agent.get("identity"),
-                    "sandbox": agent.get("sandbox"),
-                    "subagents": agent.get("subagents")
-                }
-                for agent in agents
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"读取大臣配置失败：{str(e)}")
+async def get_ministers_config(_=Depends(require_admin_token)):
+    config = _load_config()
+    agents = config.get("agents", {}).get("list", [])
+
+    return {
+        "ministers": [
+            {
+                "id": agent.get("id"),
+                "name": agent.get("name"),
+                "workspace": agent.get("workspace"),
+                "model": agent.get("model") or {},
+                "identity": agent.get("identity") or {},
+                "sandbox": agent.get("sandbox") or {},
+                "subagents": agent.get("subagents") or {},
+            }
+            for agent in agents
+        ]
+    }
+
 
 @router.put("/ministers/{minister_id}")
 async def update_minister_config(
     minister_id: str,
     config_update: ConfigUpdate,
-    db: Session = Depends(get_db)
+    _=Depends(require_admin_token),
 ):
-    """
-    更新大臣配置
-    
-    ⚠️ 重要：
-    1. 必须先验证字段规范性
-    2. 更新前必须备份
-    3. 更新后必须热重载
-    """
-    try:
-        # 1. 读取当前配置
-        with open(OPENCLAW_CONFIG_PATH, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
-        # 2. 查找大臣配置
-        agents = config.get("agents", {}).get("list", [])
-        minister_index = None
-        for i, agent in enumerate(agents):
-            if agent.get("id") == minister_id:
-                minister_index = i
-                break
-        
-        if minister_index is None:
-            raise HTTPException(status_code=404, detail=f"大臣不存在：{minister_id}")
-        
-        # 3. 验证字段规范性
-        update_data = config_update.config_value
-        allowed_fields = ["model", "workspace", "identity", "sandbox", "subagents"]
-        for key in update_data.keys():
-            if key not in allowed_fields:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"不允许修改的字段：{key}。允许字段：{allowed_fields}"
-                )
-        
-        # 4. 备份当前配置
-        backup_path = create_backup()
-        
-        # 5. 更新配置
-        for key, value in update_data.items():
-            agents[minister_index][key] = value
-        
-        # 6. 写回配置文件
-        with open(OPENCLAW_CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        # 7. 调用热重载（TODO: 实现 OpenClaw 热重载 API 调用）
-        # await reload_openclaw()
-        
-        return {
-            "message": "配置更新成功",
-            "backup_path": backup_path,
-            "minister_id": minister_id
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"更新配置失败：{str(e)}")
+    config = _load_config()
 
-def create_backup() -> str:
-    """创建配置备份"""
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_filename = f"openclaw-backup-{timestamp}.json"
-    backup_path = os.path.join(BACKUP_DIR, backup_filename)
-    
-    shutil.copy2(OPENCLAW_CONFIG_PATH, backup_path)
-    return backup_path
+    agents = config.get("agents", {}).get("list", [])
+    target_agent = None
+    for agent in agents:
+        if agent.get("id") == minister_id:
+            target_agent = agent
+            break
+
+    if target_agent is None:
+        raise HTTPException(status_code=404, detail=f"大臣不存在：{minister_id}")
+
+    update_data = config_update.config_value
+    allowed_fields = {"model", "workspace", "identity", "sandbox", "subagents"}
+
+    unknown = set(update_data.keys()) - allowed_fields
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不允许修改的字段：{sorted(unknown)}，允许字段：{sorted(allowed_fields)}",
+        )
+
+    # 先备份
+    backup_path = _create_backup()
+
+    # 更新逻辑
+    for key, value in update_data.items():
+        if key == "model":
+            if not isinstance(value, dict):
+                raise HTTPException(status_code=400, detail="model 必须是对象")
+
+            model_obj = dict(target_agent.get("model") or {})
+            model_obj.update(value)
+            if "primary" in model_obj:
+                model_obj["primary"] = _normalize_model_primary(model_obj["primary"], config)
+            target_agent["model"] = model_obj
+        else:
+            target_agent[key] = value
+
+    _save_config(config)
+
+    return {
+        "message": "配置更新成功",
+        "backup_path": backup_path,
+        "minister_id": minister_id,
+    }
+
 
 @router.post("/backup")
-async def create_config_backup():
-    """手动创建配置备份"""
-    try:
-        backup_path = create_backup()
-        return {
-            "message": "备份成功",
-            "backup_path": backup_path
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"备份失败：{str(e)}")
+async def create_config_backup(_=Depends(require_admin_token)):
+    backup_path = _create_backup()
+    return {"message": "备份成功", "backup_path": backup_path}
+
 
 @router.get("/backups")
-async def list_backups():
-    """列出所有备份"""
-    try:
-        if not os.path.exists(BACKUP_DIR):
-            return {"backups": []}
-        
-        backups = []
-        for filename in os.listdir(BACKUP_DIR):
-            if filename.startswith("openclaw-backup-"):
-                filepath = os.path.join(BACKUP_DIR, filename)
-                stat = os.stat(filepath)
-                backups.append({
-                    "filename": filename,
-                    "size": stat.st_size,
-                    "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat()
-                })
-        
-        # 按时间倒序
-        backups.sort(key=lambda x: x["created_at"], reverse=True)
-        return {"backups": backups}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"列出备份失败：{str(e)}")
+async def list_backups(_=Depends(require_admin_token)):
+    backup_dir = settings.backup_dir
+    if not backup_dir.exists():
+        return {"backups": []}
+
+    backups = []
+    for file in backup_dir.glob("openclaw-backup-*.json"):
+        stat = file.stat()
+        backups.append(
+            {
+                "filename": file.name,
+                "size": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            }
+        )
+
+    backups.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"backups": backups}
+
+
+@router.post("/restore")
+async def restore_backup(payload: RestoreRequest, _=Depends(require_admin_token)):
+    backup_file = settings.backup_dir / payload.filename
+    if not backup_file.exists():
+        raise HTTPException(status_code=404, detail="备份文件不存在")
+
+    # 先备份当前配置，再恢复
+    current_backup = _create_backup()
+    shutil.copy2(backup_file, settings.openclaw_config_path)
+
+    return {
+        "message": "恢复成功",
+        "restored_from": str(backup_file),
+        "current_backup": current_backup,
+    }
+
+
+@router.delete("/backups/{filename}")
+async def delete_backup(filename: str, _=Depends(require_admin_token)):
+    backup_file = settings.backup_dir / filename
+    if not backup_file.exists():
+        raise HTTPException(status_code=404, detail="备份文件不存在")
+
+    backup_file.unlink()
+    return {"message": "删除成功", "filename": filename}
+
 
 @router.post("/reload")
-async def reload_config():
+async def reload_config(payload: ReloadRequest = ReloadRequest(), _=Depends(require_admin_token)):
     """
-    热重载 OpenClaw 配置
-    
-    TODO: 调用 OpenClaw 热重载 API
+    触发 OpenClaw 网关重启以应用配置。
     """
+    if not payload.perform:
+        return {
+            "message": "已跳过执行",
+            "note": "传 perform=true 可执行实际重载",
+        }
+
+    if not settings.enable_reload_command:
+        raise HTTPException(status_code=403, detail="当前环境禁用了 reload 命令执行")
+
+    try:
+        result = subprocess.run(
+            settings.openclaw_reload_command,
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=payload.timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(status_code=504, detail=f"重载超时：{e}") from e
+
     return {
-        "message": "热重载功能待实现",
-        "note": "需要调用 OpenClaw 的重新加载配置接口"
+        "message": "重载命令执行完成",
+        "command": settings.openclaw_reload_command,
+        "return_code": result.returncode,
+        "stdout": (result.stdout or "")[:2000],
+        "stderr": (result.stderr or "")[:2000],
     }

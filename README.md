@@ -1,8 +1,70 @@
 # 🏛️ 朝廷政务管理系统
 
-> 管理 OpenClaw 六部大臣、任务流转、统计报表的 Web 系统
+> AI 朝廷架构 · 司礼监统领六部 · 政务处理自动化
 
-## 📋 项目结构
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/wooxi/court-admin)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+---
+
+## 📋 项目简介
+
+朝廷政务管理系统是一个基于 AI Agent 的任务调度与政务处理系统，采用传统朝廷架构设计，实现任务的自动化分派、执行、追踪和归档。
+
+**核心理念：**
+- 🏛️ **朝廷架构** — 司礼监统领六部，层级清晰
+- 🤖 **AI Agent** — 六部尚书均为 AI Agent，7×24 小时工作
+- 📊 **政务系统** — 完整的任务管理、流转追踪、统计报表
+- 🔔 **实时通知** — 飞书集成，任务状态实时推送
+
+---
+
+## 🏛️ 朝廷架构
+
+### 权力结构
+
+```
+                    ┌─────────────┐
+                    │   皇  帝    │
+                    │  (用户)     │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │   司礼监    │
+                    │ (大内总管)  │
+                    │  任务调度   │
+                    └──────┬──────┘
+                           │ 分派任务
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+    ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
+    │  兵 部  │      │  户 部  │      │  礼 部  │
+    │ ⚔️软件工程│      │ 💰财务预算│      │ 🎨品牌营销│
+    └─────────┘      └─────────┘      └─────────┘
+         │                 │                 │
+    ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
+    │  工 部  │      │  吏 部  │      │  刑 部  │
+    │ 🔧运维部署│      │ 📋项目管理│      │ ⚖️法务合规│
+    └─────────┘      └─────────┘      └─────────┘
+```
+
+### 六部职责
+
+| 部门 | 封号 | Emoji | 职责 | 模型 |
+|------|------|-------|------|------|
+| **司礼监** | 大内总管 | 🏛️ | 调度六部、日常对话、任务分派 | qwen3.5-plus |
+| **兵部** | 镇国大将军 | ⚔️ | 软件工程、系统架构、代码审查 | qwen3-coder-plus |
+| **户部** | 镇国财神 | 💰 | 财务预算、成本管控、电商运营 | qwen3.5-plus |
+| **礼部** | 文华殿大学士 | 🎨 | 品牌营销、社交媒体、内容创作 | kimi-k2.5 |
+| **工部** | 将作监大匠 | 🔧 | DevOps、服务器运维、CI/CD | qwen3-coder-next |
+| **吏部** | 文渊阁大学士 | 📋 | 项目管理、创业孵化、团队协调 | qwen3.5-plus |
+| **刑部** | 大理寺卿 | ⚖️ | 法务合规、知识产权、合同审查 | qwen3-max |
+
+---
+
+## 🔧 技术架构
+
+### 系统组成
 
 ```
 court-admin/
@@ -25,160 +87,215 @@ court-admin/
 │   └── nginx.conf      # Nginx 配置
 ├── data/               # 数据目录
 ├── logs/               # 日志目录
-├── docker-compose.yml  # Docker Compose 配置
-└── README.md
+└── docker-compose.yml  # Docker Compose 配置
 ```
+
+### 技术栈
+
+**后端：**
+- FastAPI + SQLAlchemy + MySQL
+- 任务调度 + 流转追踪
+- RESTful API
+
+**前端：**
+- Vue 3 + Element Plus
+- 实时数据刷新
+- 流转时间线展示
+
+**AI Agent：**
+- OpenClaw 框架
+- 多 Agent 协作
+- 任务自动追踪
+
+---
+
+## 📋 核心功能
+
+### 1. 大臣配置管理
+- ✅ 七部大臣配置
+- ✅ 模型动态切换
+- ✅ 工作区隔离
+- ✅ 实时刷新配置
+
+### 2. 任务管理
+- ✅ 任务创建/分派/执行/完成
+- ✅ 任务状态自动追踪
+- ✅ 政务系统任务 ID
+- ✅ 角标实时显示待办
+
+### 3. 任务流转追踪 ⭐
+- ✅ 完整流转链可视化
+- ✅ 司礼监调度逻辑展示
+- ✅ 执行日志记录
+- ✅ 时间线展示
+
+### 4. 统计报表
+- ✅ Token 用量统计
+- ✅ 任务数量统计
+- ✅ 效率分析
+- ✅ 飞书多维表格集成
+
+### 5. 定时任务
+- ✅ 服务健康检查（每 5 分钟）
+- ✅ 服务自动重启
+- ✅ 飞书通知推送
+- ✅ 心跳机制保底
+
+### 6. OpenClaw 集成
+- ✅ 大臣配置同步
+- ✅ 任务自动记录
+- ✅ completion event 追踪
+- ✅ 会话状态管理
+
+---
 
 ## 🚀 快速开始
 
-### 方式一：Docker Compose（推荐）
+### 环境要求
+
+- Docker & Docker Compose
+- MySQL 8.0+
+- Node.js 18+
+- Python 3.12+
+
+### 安装步骤
 
 ```bash
-# 进入项目目录
-cd /root/court-admin
+# 1. 克隆项目
+git clone https://github.com/wooxi/court-admin.git
+cd court-admin
 
-# 启动所有服务
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 配置数据库、飞书等
+
+# 3. 启动服务
 docker-compose up -d
 
-# 查看日志
-docker-compose logs -f
-
-# 访问服务
+# 4. 访问服务
 # 前端：http://localhost:9002
 # 后端 API: http://localhost:9001
-# MySQL: localhost:9003
+# API 文档：http://localhost:9001/docs
 ```
 
-### 方式二：本地开发
-
-#### 后端
+### 配置 OpenClaw
 
 ```bash
-cd backend
+# 安装 OpenClaw
+npm install -g openclaw
 
-# 创建虚拟环境
-python3 -m venv venv
-source venv/bin/activate
+# 配置大臣
+openclaw agents add silijian --workspace /root/clawd/silijian
+openclaw agents add bingbu --workspace /root/clawd/bingbu
+# ... 配置其他大臣
 
-# 安装依赖
-pip install -r requirements.txt
-
-# 启动服务
-uvicorn app.main:app --reload --host 0.0.0.0 --port 9001
+# 启动网关
+openclaw gateway start
 ```
 
-#### 前端
+---
+
+## 📖 使用指南
+
+### 任务分派流程
+
+1. **皇上旨意** → 司礼监接收
+2. **创建任务** → 调用 `task_recorder.create_task()`
+3. **分派六部** → 调用 `sessions_spawn()`
+4. **开始追踪** → 调用 `task_tracker.track_task()`
+5. **自动完成** → completion event 触发状态更新
+6. **回奏皇上** → 汇报完成情况
+
+### API 示例
 
 ```bash
-cd frontend
+# 创建任务
+curl -X POST http://localhost:9001/api/tasks/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "TASK-20260313-001",
+    "title": "修复 API 错误",
+    "description": "检查后端服务",
+    "assignee_id": 5,
+    "dispatcher_id": 1,
+    "status": "pending",
+    "priority": "high"
+  }'
 
-# 安装依赖
-npm install
+# 获取流转历史
+curl http://localhost:9001/api/tasks/1/flows
 
-# 启动开发服务器
-npm run dev
+# 更新任务状态
+curl -X PUT http://localhost:9001/api/tasks/1 \
+  -H "Content-Type: application/json" \
+  -d '{"status": "completed"}'
 ```
 
-## 📊 端口规划
+---
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| 前端 | 9002 | Vue 3 静态资源 |
-| 后端 API | 9001 | FastAPI 服务 |
-| MySQL | 9003 | 数据库服务 |
-| Nginx | 80/443 | 反向代理（生产） |
+## 📊 数据库设计
 
-## 🎯 核心功能
+### 核心表
 
-### 1. 大臣配置管理
-- 查看六部大臣列表
-- 配置每部模型（从 OpenClaw 配置文件获取可用模型）
-- 配置工作区路径
-- 启用/禁用大臣
+**tasks（任务表）**
+```sql
+- id: 主键
+- task_id: 任务 ID（唯一）
+- title: 任务标题
+- description: 任务描述
+- assignee_id: 承办大臣 ID
+- dispatcher_id: 调度大臣 ID
+- status: 状态（pending/processing/completed）
+- priority: 优先级
+- agent_session_key: OpenClaw 会话 key
+- created_at: 创建时间
+- completed_at: 完成时间
+```
 
-### 2. 任务管理
-- 任务列表（支持筛选、搜索）
-- 任务详情查看
-- 手动创建任务
-- 从 OpenClaw 同步任务
+**task_flows（流转表）**
+```sql
+- id: 主键
+- task_id: 任务 ID
+- from_actor: 发起方
+- to_actor: 接收方
+- action: 动作类型
+- remark: 备注
+- meta_data: 扩展元数据（JSON）
+- created_at: 记录时间
+```
 
-### 3. 任务流转追踪 ⭐
-- 完整流转链可视化
-- 司礼监调度逻辑展示
-- 流转图展示
+**ministers（大臣表）**
+```sql
+- id: 主键
+- name: 大臣名称
+- department: 部门
+- model_id: 模型 ID
+- workspace: 工作区路径
+- enabled: 是否启用
+```
 
-### 4. 统计报表
-- Token 用量统计
-- 任务数量统计
-- 效率分析
+---
 
-### 5. OpenClaw 配置管理
-- 查看当前配置
-- 编辑模型配置（先获取可用列表）
-- 配置备份与恢复
-- 热重载（待实现）
+## 🔔 通知机制
 
-## ⚙️ 配置说明
+### 飞书集成
 
-### 环境变量
+**通知场景：**
+- ✅ 任务分派通知
+- ✅ 任务完成通知
+- ✅ 服务异常告警
+- ✅ 定时任务报告
 
-后端服务支持以下环境变量：
+**配置方式：**
+```bash
+# .env 配置
+FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
+FEISHU_CHAT_ID=oc_xxxxxxxxxxxxx
+```
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DATABASE_URL` | mysql+pymysql://... | 数据库连接 URL |
-| `OPENCLAW_CONFIG_PATH` | /root/.openclaw/openclaw.json | OpenClaw 配置文件路径 |
-| `BACKUP_DIR` | /app/data/backups | 配置备份目录 |
+---
 
-### OpenClaw 配置集成
-
-系统会读取 `/root/.openclaw/openclaw.json` 配置文件：
-
-- **可用模型列表**: `models.providers[].models[]`
-- **大臣配置**: `agents.list[]`
-- **大臣模型**: `agents.list[].model.primary`
-
-⚠️ **重要原则：**
-- 修改配置前必须先备份
-- 不确定的字段必须提出，不能臆想猜测
-- 修改后需要调用热重载 API
-
-## 📝 API 文档
-
-启动后端后访问：http://localhost:9001/docs
-
-### 主要 API
-
-| 模块 | 路径 | 方法 | 说明 |
-|------|------|------|------|
-| 大臣管理 | /api/ministers | GET/POST/PUT/DELETE | 大臣 CRUD |
-| 模型列表 | /api/models/available | GET | 获取可用模型 |
-| 任务管理 | /api/tasks | GET/POST/PUT/DELETE | 任务 CRUD |
-| 流转追踪 | /api/flows/task/{id} | GET | 获取流转链 |
-| 统计报表 | /api/stats/token | GET | Token 统计 |
-| 配置管理 | /api/config | GET/PUT | 配置管理 |
-
-## 🛠️ 技术栈
-
-### 后端
-- **框架**: FastAPI
-- **ORM**: SQLAlchemy
-- **数据库**: MySQL 8.0
-- **验证**: Pydantic
-
-### 前端
-- **框架**: Vue 3
-- **UI 库**: Element Plus
-- **路由**: Vue Router
-- **状态管理**: Pinia
-- **图表**: ECharts
-
-### 部署
-- **容器**: Docker
-- **编排**: Docker Compose
-- **反向代理**: Nginx
-
-## 📋 开发计划
+## 📝 开发计划
 
 - [x] 后端框架搭建
 - [x] 数据库模型设计
@@ -186,20 +303,30 @@ npm run dev
 - [x] 前端框架搭建
 - [x] 大臣管理页面
 - [x] 任务管理页面
-- [ ] 流转追踪页面完善
-- [ ] 统计报表完善
-- [ ] 配置管理完善
-- [ ] OpenClaw 热重载集成
-- [ ] 权限管理
+- [x] 流转追踪页面
+- [x] 任务自动记录机制
+- [x] completion event 追踪
+- [x] 心跳检查机制
+- [x] 飞书通知集成
 - [ ] 单元测试
+- [ ] 性能优化
+- [ ] 移动端适配
+
+---
 
 ## 📞 联系方式
 
-- **项目位置**: `/root/court-admin`
-- **文档**: `/root/court-admin/README.md`
-- **设计文档**: 飞书云文档
+- **GitHub:** https://github.com/wooxi/court-admin
+- **作者:** 王重洋
+- **版本:** v2.0.0
+
+---
+
+## 📄 许可证
+
+MIT License
 
 ---
 
 *创建时间：2026-03-10*  
-*版本：v2.0.0*
+*最后更新：2026-03-13*
