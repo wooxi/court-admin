@@ -7,6 +7,7 @@ __pycache__/
 *.so
 .Python
 venv/
+backend/venv/
 env/
 ENV/
 .venv
@@ -37,7 +38,8 @@ logs/
 # 数据
 data/*.db
 data/*.sqlite
-data/backups/*.sql
+data/backups/*
+!data/backups/.gitkeep
 
 # OpenClaw 配置（敏感）
 /root/.openclaw/openclaw.json
