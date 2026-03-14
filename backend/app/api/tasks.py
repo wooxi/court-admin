@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, List, Literal, Optional
 
@@ -17,6 +18,7 @@ from app.models.task import Task
 from app.models.task_execution import TaskExecutionDetail
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 TaskStatus = Literal["pending", "processing", "completed"]
 TaskPriority = Literal["high", "medium", "low"]
 
@@ -227,6 +229,18 @@ def _build_execution_payload(db_task: Task, task_update: TaskUpdate, db: Session
 
 def _create_or_update_execution_detail(db_task: Task, task_update: TaskUpdate, db: Session) -> None:
     payload = _build_execution_payload(db_task, task_update, db)
+
+    has_any_token = any(
+        payload.get(key) is not None
+        for key in ("input_tokens", "output_tokens", "total_tokens")
+    )
+    if not has_any_token:
+        logger.warning(
+            "skip task_execution_details for completed task without tokens: task_id=%s source=%s",
+            db_task.task_id,
+            payload.get("source"),
+        )
+        return
 
     existing = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id == db_task.task_id).first()
     if existing:
