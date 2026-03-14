@@ -7,8 +7,8 @@
         <div class="filters-left">
           <span class="filter-label">统计窗口</span>
           <el-radio-group v-model="periodDays" size="small">
-            <el-radio-button :label="7">近 7 天</el-radio-button>
-            <el-radio-button :label="30">近 30 天</el-radio-button>
+            <el-radio-button :value="7">近 7 天</el-radio-button>
+            <el-radio-button :value="30">近 30 天</el-radio-button>
           </el-radio-group>
 
           <span class="filter-label">大臣筛选</span>

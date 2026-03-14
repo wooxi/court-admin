@@ -74,7 +74,8 @@ const taskBadge = ref('')
 const loadTaskBadge = async () => {
   try {
     // 获取 pending 和 processing 状态的任务数量
-    const tasks = await api.get('/tasks/', { params: { limit: 1000 } })
+    // 后端 /api/tasks 的 limit 上限为 500，避免触发 422
+    const tasks = await api.get('/tasks/', { params: { limit: 500 } })
     const pendingCount = tasks.filter(t => t.status === 'pending' || t.status === 'processing').length
     
     if (pendingCount > 0) {
