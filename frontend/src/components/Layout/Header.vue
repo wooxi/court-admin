@@ -42,7 +42,7 @@ const routeTitleMap = {
   '/config': '⚙️ 配置',
 }
 
-const currentRouteTitle = computed(() => routeTitleMap[route.path] || '页面')
+const currentRouteTitle = computed(() => route.meta?.title || routeTitleMap[route.path] || '页面')
 
 const loadTaskCount = async () => {
   try {
