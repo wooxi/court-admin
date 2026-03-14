@@ -105,29 +105,73 @@ const ministerStatus = {
 
 const getMinisterWithStatus = (minister) => {
   const status = ministerStatus[minister.name] || { status: 'idle', emoji: '👤', lastActive: '未知' }
-  return { ...minister, ...status, model: minister.model_id }
+  // 模型信息优先展示 OpenClaw 配置源（model_primary），避免被数据库旧值覆盖。
+  const model = minister.model_primary || minister.model_id || ''
+  return { ...minister, ...status, model }
 }
 
-const loadMinisters = async () => {
-  loading.value = true
-  try {
-    ministers.value = await api.get('/ministers/')
-  } finally {
-    loading.value = false
+const mergeMinistersWithConfig = (dbMinisters = [], configMinisters = []) => {
+  const configById = new Map(configMinisters.map((item) => [item.id, item]))
+
+  const merged = dbMinisters.map((minister) => {
+    const configItem = configById.get(minister.id)
+    if (!configItem) return minister
+
+    return {
+      ...minister,
+      name: configItem.name || minister.name,
+      model_id: configItem.model_primary || minister.model_id,
+      model_primary: configItem.model_primary || minister.model_id,
+      workspace: configItem.workspace || minister.workspace,
+      enabled: typeof configItem.enabled === 'boolean' ? configItem.enabled : minister.enabled,
+      config_source: 'openclaw',
+    }
+  })
+
+  // 兜底：配置里有但数据库尚未入库的大臣，也要展示出来。
+  configMinisters.forEach((configItem) => {
+    if (merged.some((minister) => minister.id === configItem.id)) return
+
+    merged.push({
+      id: configItem.id,
+      name: configItem.name || configItem.agent_id || `大臣-${configItem.id}`,
+      department: configItem.name || configItem.agent_id || '',
+      model_id: configItem.model_primary || '',
+      model_primary: configItem.model_primary || '',
+      workspace: configItem.workspace || '/root/clawd',
+      enabled: typeof configItem.enabled === 'boolean' ? configItem.enabled : true,
+      config_source: 'openclaw',
+    })
+  })
+
+  return merged.sort((a, b) => a.id - b.id)
+}
+
+const loadMinisters = async ({ apply = true } = {}) => {
+  const list = await api.get('/ministers/')
+  if (apply) {
+    ministers.value = list
   }
+  return list
 }
 
 const loadFromOpenClaw = async () => {
   loading.value = true
   try {
     const data = await api.get('/ministers/openclaw/config')
-    if (data.ok && data.ministers) {
-      // 将 openclaw 配置同步到数据库
+
+    if (data.ok && Array.isArray(data.ministers)) {
+      // 先触发后端同步，确保数据库与配置文件保持一致。
       const reloadResult = await api.post('/ministers/openclaw/reload')
+      const dbMinisters = await loadMinisters({ apply: false })
+
+      // 页面展示以 OpenClaw 配置接口为准，规避数据库旧缓存导致的错位。
+      ministers.value = mergeMinistersWithConfig(dbMinisters, data.ministers)
       ElMessage.success(reloadResult.message || '配置已刷新')
-      // 重新加载大臣列表
-      await loadMinisters()
+      return
     }
+
+    await loadMinisters()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '刷新配置失败')
   } finally {
@@ -141,11 +185,12 @@ const saveToOpenClaw = async () => {
     // 准备同步数据
     const syncData = ministers.value.map((m) => ({
       id: m.id,
-      model_primary: m.model_id,
+      model_primary: m.model_primary || m.model_id,
     }))
-    
+
     const result = await api.put('/ministers/openclaw/sync', syncData)
     ElMessage.success(result.message || '配置已保存到 openclaw.json')
+    await loadFromOpenClaw()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '保存配置失败')
   } finally {
@@ -205,7 +250,7 @@ const saveMinister = async () => {
     }
     ElMessage.success('保存成功')
     showEditDialog.value = false
-    await loadMinisters()
+    await loadFromOpenClaw()
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '保存失败')
   }

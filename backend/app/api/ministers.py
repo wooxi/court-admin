@@ -153,7 +153,9 @@ async def get_ministers_from_openclaw():
                     "name": agent.get("name", ""),
                     "model_primary": agent.get("model", {}).get("primary", ""),
                     "workspace": agent.get("workspace", ""),
-                    "enabled": agent.get("sandbox", {}).get("mode", "off") != "off",
+                    # OpenClaw 中通常不会通过 sandbox.mode 表达“是否启用大臣”，
+                    # 这里优先读取显式 enabled/disabled 字段，避免把 sandbox=off 误判为未启用。
+                    "enabled": bool(agent.get("enabled", not agent.get("disabled", False))),
                 })
         
         return {"ok": True, "ministers": result}
@@ -193,8 +195,9 @@ async def sync_ministers_to_openclaw(ministers: List[dict]):
         
         for agent in agents:
             agent_id = agent.get("id")
-            db_id = MINISTER_AGENT_MAP.get(agent_id)
-            
+            # agents.list 中的 id 是字符串（如 "bingbu"），需要使用反向映射取数据库 ID
+            db_id = AGENT_MINISTER_MAP.get(agent_id)
+
             if db_id and db_id in update_map:
                 new_model = update_map[db_id]
                 old_model = agent.get("model", {}).get("primary", "")
@@ -211,14 +214,17 @@ async def sync_ministers_to_openclaw(ministers: List[dict]):
         
         # 更新数据库
         db = next(get_db())
-        for minister_data in ministers:
-            if minister_data.get("model_primary"):
-                db_minister = db.query(Minister).filter(Minister.id == minister_data["id"]).first()
-                if db_minister:
-                    db_minister.model_id = minister_data["model_primary"]
-        
-        db.commit()
-        
+        try:
+            for minister_data in ministers:
+                if minister_data.get("model_primary"):
+                    db_minister = db.query(Minister).filter(Minister.id == minister_data["id"]).first()
+                    if db_minister:
+                        db_minister.model_id = minister_data["model_primary"]
+
+            db.commit()
+        finally:
+            db.close()
+
         return {
             "ok": True,
             "message": f"已同步 {updated_count} 个大臣配置",
@@ -247,24 +253,28 @@ async def reload_openclaw_config():
         db = next(get_db())
         updated_count = 0
         updated_ministers = []
-        
-        for agent in agents:
-            agent_id = agent.get("id")
-            db_id = MINISTER_AGENT_MAP.get(agent_id)
-            
-            if db_id:
-                db_minister = db.query(Minister).filter(Minister.id == db_id).first()
-                if db_minister:
-                    new_model = agent.get("model", {}).get("primary", "")
-                    # 强制更新，不管是否相同
-                    if db_minister.model_id != new_model:
-                        db_minister.model_id = new_model
-                        updated_count += 1
-                        updated_ministers.append(f"{agent_id}({db_id}): {new_model}")
-        
-        if updated_count > 0:
-            db.commit()
-        
+
+        try:
+            for agent in agents:
+                agent_id = agent.get("id")
+                # agents.list 中的 id 是字符串（如 "bingbu"），需要使用反向映射取数据库 ID
+                db_id = AGENT_MINISTER_MAP.get(agent_id)
+
+                if db_id:
+                    db_minister = db.query(Minister).filter(Minister.id == db_id).first()
+                    if db_minister:
+                        new_model = agent.get("model", {}).get("primary", "")
+                        # 强制更新，不管是否相同
+                        if db_minister.model_id != new_model:
+                            db_minister.model_id = new_model
+                            updated_count += 1
+                            updated_ministers.append(f"{agent_id}({db_id}): {new_model}")
+
+            if updated_count > 0:
+                db.commit()
+        finally:
+            db.close()
+
         return {
             "ok": True,
             "message": f"已从配置文件加载 {updated_count} 个更新",
