@@ -65,6 +65,18 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="总 Token" width="130">
+          <template #default="{ row }">
+            {{ formatTokenValue(row.execution_detail?.total_tokens) }}
+          </template>
+        </el-table-column>
+
+        <el-table-column label="耗时" width="130">
+          <template #default="{ row }">
+            {{ formatDuration(row.execution_detail?.duration_seconds) }}
+          </template>
+        </el-table-column>
+
         <el-table-column label="分派时间" width="180">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
@@ -186,7 +198,26 @@ const getAssigneeName = (id) => ministerMap.value[id] || `#${id}`
 const getDispatcherName = (id) => ministerMap.value[id] || '司礼监'
 const getStatusType = (status) => ({ pending: 'info', processing: 'warning', completed: 'success' }[status] || 'info')
 const getStatusText = (status) => ({ pending: '待处理', processing: '进行中', completed: '已完成' }[status] || status)
-const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
+const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '--')
+
+const formatTokenValue = (value) => {
+  if (value === null || value === undefined) return '--'
+  return Number(value).toLocaleString('zh-CN')
+}
+
+const formatDuration = (seconds) => {
+  if (seconds === null || seconds === undefined) return '--'
+  const total = Number(seconds)
+  if (!Number.isFinite(total)) return '--'
+
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+
+  if (h > 0) return `${h}小时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
 
 const resetFilters = () => {
   filters.value = { status: '', assignee: '' }

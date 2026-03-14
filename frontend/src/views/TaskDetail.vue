@@ -28,7 +28,13 @@
         <el-descriptions-item label="分派时间">{{ formatDate(task.created_at) }}</el-descriptions-item>
         <el-descriptions-item label="完成时间">{{ formatDate(task.completed_at) }}</el-descriptions-item>
         <el-descriptions-item label="优先级">{{ getPriorityText(task.priority) }}</el-descriptions-item>
-        <el-descriptions-item label="任务描述" :span="3">{{ task.description || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="总 Token">{{ formatTokenValue(task.execution_detail?.total_tokens) }}</el-descriptions-item>
+        <el-descriptions-item label="输入/输出 Token">
+          {{ formatTokenSplit(task.execution_detail?.input_tokens, task.execution_detail?.output_tokens) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="执行耗时">{{ formatDuration(task.execution_detail?.duration_seconds) }}</el-descriptions-item>
+        <el-descriptions-item label="明细来源">{{ task.execution_detail?.source || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="任务描述" :span="3">{{ task.description || '--' }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -157,10 +163,36 @@ const executionLogs = computed(() => {
   return logs
 })
 
-const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
+const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '--')
 const getStatusType = (status) => ({ pending: 'info', processing: 'warning', completed: 'success' }[status] || 'info')
 const getStatusText = (status) => ({ pending: '待处理', processing: '进行中', completed: '已完成' }[status] || status)
-const getPriorityText = (priority) => ({ high: '高', medium: '中', low: '低' }[priority] || priority || '-')
+const getPriorityText = (priority) => ({ high: '高', medium: '中', low: '低' }[priority] || priority || '--')
+
+const formatTokenValue = (value) => {
+  if (value === null || value === undefined) return '--'
+  return Number(value).toLocaleString('zh-CN')
+}
+
+const formatTokenSplit = (input, output) => {
+  const inputText = formatTokenValue(input)
+  const outputText = formatTokenValue(output)
+  if (inputText === '--' && outputText === '--') return '--'
+  return `${inputText} / ${outputText}`
+}
+
+const formatDuration = (seconds) => {
+  if (seconds === null || seconds === undefined) return '--'
+  const total = Number(seconds)
+  if (!Number.isFinite(total)) return '--'
+
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+
+  if (h > 0) return `${h}小时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
 
 const getMinisterName = (id, fallback = '-') => ministerMap.value[id] || fallback
 

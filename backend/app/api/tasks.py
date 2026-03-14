@@ -74,6 +74,16 @@ class TaskUpdate(BaseModel):
     source: Optional[str] = Field(default=None, max_length=50)
 
 
+class TaskExecutionSummary(BaseModel):
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    duration_seconds: Optional[int] = None
+    session_key: Optional[str] = None
+    source: Optional[str] = None
+    completed_at: Optional[datetime] = None
+
+
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -89,6 +99,7 @@ class TaskResponse(BaseModel):
     priority: TaskPriority
     created_at: datetime
     completed_at: Optional[datetime]
+    execution_detail: Optional[TaskExecutionSummary] = None
 
 
 class TaskFlowCreate(BaseModel):
@@ -130,6 +141,47 @@ def _get_task_or_404(task_id: int, db: Session) -> Task:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+def _get_execution_detail_map(task_codes: list[str], db: Session) -> dict[str, TaskExecutionDetail]:
+    if not task_codes:
+        return {}
+
+    rows = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id.in_(task_codes)).all()
+    return {row.task_id: row for row in rows}
+
+
+def _to_execution_summary(detail: Optional[TaskExecutionDetail]) -> Optional[TaskExecutionSummary]:
+    if not detail:
+        return None
+
+    return TaskExecutionSummary(
+        input_tokens=detail.input_tokens,
+        output_tokens=detail.output_tokens,
+        total_tokens=detail.total_tokens,
+        duration_seconds=detail.duration_seconds,
+        session_key=detail.session_key,
+        source=detail.source,
+        completed_at=detail.completed_at,
+    )
+
+
+def _to_task_response(db_task: Task, detail: Optional[TaskExecutionDetail] = None) -> TaskResponse:
+    return TaskResponse(
+        id=db_task.id,
+        task_id=db_task.task_id,
+        title=db_task.title,
+        description=db_task.description,
+        creator_id=db_task.creator_id,
+        assignee_id=db_task.assignee_id,
+        dispatcher_id=db_task.dispatcher_id,
+        agent_session_key=db_task.agent_session_key,
+        status=db_task.status,
+        priority=db_task.priority,
+        created_at=db_task.created_at,
+        completed_at=db_task.completed_at,
+        execution_detail=_to_execution_summary(detail),
+    )
 
 
 def _to_int(value: Any) -> Optional[int]:
@@ -190,6 +242,21 @@ def _extract_tokens_from_flow_metadata(task_pk: int, db: Session) -> tuple[Optio
     return None, None, None, "task_update_api"
 
 
+def _get_explicit_execution_fields(task_update: TaskUpdate) -> set[str]:
+    explicit_fields: set[str] = set()
+    fields_set = getattr(task_update, "model_fields_set", set())
+
+    for field in ("input_tokens", "output_tokens", "total_tokens", "duration_seconds", "session_key", "source"):
+        if field in fields_set and getattr(task_update, field) is not None:
+            explicit_fields.add(field)
+
+    return explicit_fields
+
+
+def _has_explicit_execution_update(task_update: TaskUpdate) -> bool:
+    return bool(_get_explicit_execution_fields(task_update))
+
+
 def _build_execution_payload(db_task: Task, task_update: TaskUpdate, db: Session) -> dict[str, Any]:
     input_tokens = _to_int(task_update.input_tokens)
     output_tokens = _to_int(task_update.output_tokens)
@@ -229,6 +296,7 @@ def _build_execution_payload(db_task: Task, task_update: TaskUpdate, db: Session
 
 def _create_or_update_execution_detail(db_task: Task, task_update: TaskUpdate, db: Session) -> None:
     payload = _build_execution_payload(db_task, task_update, db)
+    explicit_fields = _get_explicit_execution_fields(task_update)
 
     has_any_token = any(
         payload.get(key) is not None
@@ -256,20 +324,21 @@ def _create_or_update_execution_detail(db_task: Task, task_update: TaskUpdate, d
             "completed_at",
             "session_key",
         ):
-            current = getattr(existing, field)
             incoming = payload[field]
-            if current is None and incoming is not None:
+            if incoming is None:
+                continue
+
+            current = getattr(existing, field)
+            should_override = field in explicit_fields
+            if (current is None or should_override) and current != incoming:
                 setattr(existing, field, incoming)
                 changed = True
 
-        # 默认来源可被更具体来源覆盖
-        if (
-            payload["source"]
-            and (existing.source in (None, "task_update_api"))
-            and payload["source"] != existing.source
-        ):
-            existing.source = payload["source"]
-            changed = True
+        # 显式来源优先；其次允许更具体来源覆盖默认来源
+        if payload["source"] and payload["source"] != existing.source:
+            if "source" in explicit_fields or existing.source in (None, "task_update_api"):
+                existing.source = payload["source"]
+                changed = True
 
         if changed:
             db.add(existing)
@@ -292,7 +361,9 @@ async def get_tasks(
     if assignee_id:
         query = query.filter(Task.assignee_id == assignee_id)
 
-    return query.order_by(Task.created_at.desc()).limit(limit).all()
+    rows = query.order_by(Task.created_at.desc()).limit(limit).all()
+    detail_map = _get_execution_detail_map([row.task_id for row in rows], db)
+    return [_to_task_response(row, detail_map.get(row.task_id)) for row in rows]
 
 
 @router.get("/by-code/{task_code}", response_model=TaskResponse)
@@ -300,12 +371,16 @@ async def get_task_by_code(task_code: str, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.task_id == task_code).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return task
+
+    detail = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id == task.task_id).first()
+    return _to_task_response(task, detail)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(task_id: int, db: Session = Depends(get_db)):
-    return _get_task_or_404(task_id, db)
+    db_task = _get_task_or_404(task_id, db)
+    detail = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id == db_task.task_id).first()
+    return _to_task_response(db_task, detail)
 
 
 @router.post("/", response_model=TaskResponse, status_code=201)
@@ -348,7 +423,7 @@ async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(db_task)
-    return db_task
+    return _to_task_response(db_task)
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
@@ -414,12 +489,17 @@ async def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_
         )
 
     status_changed_to_completed = task.status == "completed" and old_status != "completed"
-    if status_changed_to_completed:
+    status_reconfirmed_as_completed = task.status == "completed" and old_status == "completed"
+    explicit_execution_update = _has_explicit_execution_update(task)
+    current_status_completed = db_task.status == "completed"
+
+    if current_status_completed and (status_changed_to_completed or status_reconfirmed_as_completed or explicit_execution_update):
         _create_or_update_execution_detail(db_task, task, db)
 
     db.commit()
     db.refresh(db_task)
-    return db_task
+    detail = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id == db_task.task_id).first()
+    return _to_task_response(db_task, detail)
 
 
 @router.delete("/{task_id}")
