@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, literal_column
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import get_db
 from app.models.minister import Minister
 from app.models.task import Task
+from app.models.task_execution import TaskExecutionDetail
 from app.models.usage import TokenUsage
 
 router = APIRouter()
@@ -192,4 +193,128 @@ async def get_efficiency_stats(
             }
             for row in rows
         ],
+    }
+
+
+@router.get("/task-executions")
+async def get_task_execution_details(
+    minister_id: int | None = Query(default=None, ge=1),
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    任务执行明细（仅统计启用后新增的数据）。
+
+    - 支持按大臣、完成时间范围筛选
+    - 支持分页
+    - 返回聚合统计：人均单任务 token / 平均耗时 / 总耗时
+    """
+    if start_time and end_time and start_time > end_time:
+        return {
+            "items": [],
+            "summary": {
+                "total_records": 0,
+                "total_tokens": 0,
+                "avg_tokens_per_task": 0,
+                "avg_duration_seconds": 0,
+                "total_duration_seconds": 0,
+            },
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": 0,
+                "total_pages": 0,
+            },
+            "filters": {
+                "minister_id": minister_id,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+            },
+            "note": "start_time 大于 end_time，返回空结果。",
+        }
+
+    filters = []
+    if minister_id:
+        filters.append(TaskExecutionDetail.minister_id == minister_id)
+    if start_time:
+        filters.append(TaskExecutionDetail.completed_at >= start_time)
+    if end_time:
+        filters.append(TaskExecutionDetail.completed_at <= end_time)
+
+    base_query = (
+        db.query(
+            TaskExecutionDetail,
+            Minister.name.label("minister_name"),
+            Minister.department.label("minister_department"),
+            Task.title.label("task_title"),
+        )
+        .join(Minister, Minister.id == TaskExecutionDetail.minister_id)
+        .outerjoin(Task, Task.id == TaskExecutionDetail.task_pk)
+    )
+
+    if filters:
+        base_query = base_query.filter(*filters)
+
+    total = base_query.order_by(None).count()
+
+    aggregate_query = db.query(
+        func.count(TaskExecutionDetail.id).label("total_records"),
+        func.coalesce(func.sum(TaskExecutionDetail.total_tokens), 0).label("total_tokens"),
+        func.coalesce(func.avg(TaskExecutionDetail.total_tokens), 0).label("avg_tokens_per_task"),
+        func.coalesce(func.avg(TaskExecutionDetail.duration_seconds), 0).label("avg_duration_seconds"),
+        func.coalesce(func.sum(TaskExecutionDetail.duration_seconds), 0).label("total_duration_seconds"),
+    )
+    if filters:
+        aggregate_query = aggregate_query.filter(*filters)
+    summary_row = aggregate_query.first()
+
+    rows = (
+        base_query.order_by(TaskExecutionDetail.completed_at.desc(), TaskExecutionDetail.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "items": [
+            {
+                "id": detail.id,
+                "task_id": detail.task_id,
+                "task_title": task_title,
+                "task_pk": detail.task_pk,
+                "minister_id": detail.minister_id,
+                "minister_name": minister_name,
+                "minister_department": minister_department,
+                "input_tokens": detail.input_tokens,
+                "output_tokens": detail.output_tokens,
+                "total_tokens": detail.total_tokens,
+                "duration_seconds": detail.duration_seconds,
+                "completed_at": detail.completed_at,
+                "session_key": detail.session_key,
+                "source": detail.source,
+            }
+            for detail, minister_name, minister_department, task_title in rows
+        ],
+        "summary": {
+            "total_records": int(summary_row.total_records or 0),
+            "total_tokens": int(summary_row.total_tokens or 0),
+            "avg_tokens_per_task": round(float(summary_row.avg_tokens_per_task or 0), 2),
+            "avg_duration_seconds": round(float(summary_row.avg_duration_seconds or 0), 2),
+            "total_duration_seconds": int(summary_row.total_duration_seconds or 0),
+        },
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": int(total or 0),
+            "total_pages": (int(total or 0) + page_size - 1) // page_size if total else 0,
+        },
+        "filters": {
+            "minister_id": minister_id,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
+        },
+        "note": "仅统计任务执行明细功能启用后产生的新完成任务数据，不回填历史任务。",
     }

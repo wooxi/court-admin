@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,10 +14,32 @@ from app.models import get_db
 from app.models.flow import TaskFlow
 from app.models.minister import Minister
 from app.models.task import Task
+from app.models.task_execution import TaskExecutionDetail
 
 router = APIRouter()
 TaskStatus = Literal["pending", "processing", "completed"]
 TaskPriority = Literal["high", "medium", "low"]
+
+
+TOKEN_KEY_ALIASES = {
+    "input_tokens": (
+        "input_tokens",
+        "inputTokens",
+        "prompt_tokens",
+        "promptTokens",
+    ),
+    "output_tokens": (
+        "output_tokens",
+        "outputTokens",
+        "completion_tokens",
+        "completionTokens",
+    ),
+    "total_tokens": (
+        "total_tokens",
+        "totalTokens",
+        "tokens",
+    ),
+}
 
 
 class TaskCreate(BaseModel):
@@ -40,6 +62,14 @@ class TaskUpdate(BaseModel):
     priority: Optional[TaskPriority] = None
     agent_session_key: Optional[str] = Field(default=None, max_length=128)
     completed_at: Optional[datetime] = None
+
+    # 任务执行明细（可选）
+    input_tokens: Optional[int] = Field(default=None, ge=0)
+    output_tokens: Optional[int] = Field(default=None, ge=0)
+    total_tokens: Optional[int] = Field(default=None, ge=0)
+    duration_seconds: Optional[int] = Field(default=None, ge=0)
+    session_key: Optional[str] = Field(default=None, max_length=128)
+    source: Optional[str] = Field(default=None, max_length=50)
 
 
 class TaskResponse(BaseModel):
@@ -98,6 +128,140 @@ def _get_task_or_404(task_id: int, db: Session) -> Task:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+def _to_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+    return None
+
+
+def _find_numeric_value(payload: Any, keys: tuple[str, ...], depth: int = 0, max_depth: int = 4) -> Optional[int]:
+    if depth > max_depth or not isinstance(payload, dict):
+        return None
+
+    for key in keys:
+        value = _to_int(payload.get(key))
+        if value is not None:
+            return value
+
+    for value in payload.values():
+        if isinstance(value, dict):
+            found = _find_numeric_value(value, keys, depth + 1, max_depth)
+            if found is not None:
+                return found
+
+    return None
+
+
+def _extract_tokens_from_flow_metadata(task_pk: int, db: Session) -> tuple[Optional[int], Optional[int], Optional[int], str]:
+    flows = (
+        db.query(TaskFlow)
+        .filter(TaskFlow.task_id == task_pk)
+        .order_by(TaskFlow.created_at.desc(), TaskFlow.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    for flow in flows:
+        metadata = flow.meta_data or {}
+        if not isinstance(metadata, dict):
+            continue
+
+        input_tokens = _find_numeric_value(metadata, TOKEN_KEY_ALIASES["input_tokens"])
+        output_tokens = _find_numeric_value(metadata, TOKEN_KEY_ALIASES["output_tokens"])
+        total_tokens = _find_numeric_value(metadata, TOKEN_KEY_ALIASES["total_tokens"])
+
+        if any(v is not None for v in (input_tokens, output_tokens, total_tokens)):
+            if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+                total_tokens = (input_tokens or 0) + (output_tokens or 0)
+            return input_tokens, output_tokens, total_tokens, f"task_flow:{flow.action}"
+
+    return None, None, None, "task_update_api"
+
+
+def _build_execution_payload(db_task: Task, task_update: TaskUpdate, db: Session) -> dict[str, Any]:
+    input_tokens = _to_int(task_update.input_tokens)
+    output_tokens = _to_int(task_update.output_tokens)
+    total_tokens = _to_int(task_update.total_tokens)
+    source = task_update.source or "task_update_api"
+
+    if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        flow_input, flow_output, flow_total, flow_source = _extract_tokens_from_flow_metadata(db_task.id, db)
+        input_tokens = flow_input
+        output_tokens = flow_output
+        total_tokens = flow_total
+        if not task_update.source:
+            source = flow_source
+
+    duration_seconds = _to_int(task_update.duration_seconds)
+    if duration_seconds is None and db_task.completed_at and db_task.created_at:
+        duration_seconds = max(int((db_task.completed_at - db_task.created_at).total_seconds()), 0)
+
+    session_key = task_update.session_key or db_task.agent_session_key
+
+    return {
+        "task_id": db_task.task_id,
+        "task_pk": db_task.id,
+        "minister_id": db_task.assignee_id,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "duration_seconds": duration_seconds,
+        "completed_at": db_task.completed_at or datetime.now(),
+        "session_key": session_key,
+        "source": source,
+    }
+
+
+def _create_or_update_execution_detail(db_task: Task, task_update: TaskUpdate, db: Session) -> None:
+    payload = _build_execution_payload(db_task, task_update, db)
+
+    existing = db.query(TaskExecutionDetail).filter(TaskExecutionDetail.task_id == db_task.task_id).first()
+    if existing:
+        changed = False
+
+        for field in (
+            "task_pk",
+            "minister_id",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "duration_seconds",
+            "completed_at",
+            "session_key",
+        ):
+            current = getattr(existing, field)
+            incoming = payload[field]
+            if current is None and incoming is not None:
+                setattr(existing, field, incoming)
+                changed = True
+
+        # 默认来源可被更具体来源覆盖
+        if (
+            payload["source"]
+            and (existing.source in (None, "task_update_api"))
+            and payload["source"] != existing.source
+        ):
+            existing.source = payload["source"]
+            changed = True
+
+        if changed:
+            db.add(existing)
+        return
+
+    db.add(TaskExecutionDetail(**payload))
 
 
 @router.get("/", response_model=List[TaskResponse])
@@ -186,10 +350,16 @@ async def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_
         if not assignee:
             raise HTTPException(status_code=400, detail="承办大臣不存在")
 
+    execution_fields = {"input_tokens", "output_tokens", "total_tokens", "duration_seconds", "session_key", "source"}
+
     for key, value in update_data.items():
-        if key == "completed_at":
+        if key == "completed_at" or key in execution_fields:
             continue
         setattr(db_task, key, value)
+
+    # 如果外部传了 session_key，同时补到 tasks.agent_session_key，便于后续追踪
+    if task.session_key and not db_task.agent_session_key:
+        db_task.agent_session_key = task.session_key
 
     if task.status == "completed":
         db_task.completed_at = task.completed_at or datetime.now()
@@ -228,6 +398,10 @@ async def update_task(task_id: int, task: TaskUpdate, db: Session = Depends(get_
                 },
             )
         )
+
+    status_changed_to_completed = task.status == "completed" and old_status != "completed"
+    if status_changed_to_completed:
+        _create_or_update_execution_detail(db_task, task, db)
 
     db.commit()
     db.refresh(db_task)

@@ -133,6 +133,7 @@ court-admin/
 - ✅ Token 用量统计
 - ✅ 任务数量统计
 - ✅ 效率分析
+- ✅ 任务执行明细（Token 与耗时，支持筛选/分页）
 - ✅ 飞书多维表格集成
 
 ### 5. 定时任务
@@ -239,11 +240,16 @@ curl -X POST http://localhost:9001/api/tasks/ \
 # 获取流转历史
 curl http://localhost:9001/api/tasks/1/flows
 
-# 更新任务状态
+# 更新任务状态（完成时会自动写入任务执行明细，幂等）
 curl -X PUT http://localhost:9001/api/tasks/1 \
   -H "Content-Type: application/json" \
   -d '{"status": "completed"}'
+
+# 查询任务执行明细（支持大臣 + 时间范围 + 分页）
+curl "http://localhost:9001/api/stats/task-executions?minister_id=5&page=1&page_size=20&start_time=2026-03-14T00:00:00%2B08:00&end_time=2026-03-14T23:59:59%2B08:00"
 ```
+
+> 说明：任务执行明细仅统计功能启用后新产生的完成任务数据，不做历史回填。
 
 ---
 
@@ -276,6 +282,19 @@ curl -X PUT http://localhost:9001/api/tasks/1 \
 - remark: 备注
 - meta_data: 扩展元数据（JSON）
 - created_at: 记录时间
+```
+
+**task_execution_details（任务执行明细表）**
+```sql
+- id: 主键
+- task_id: 业务任务 ID（唯一）
+- task_pk: tasks.id（可空）
+- minister_id: 承办大臣 ID
+- input_tokens/output_tokens/total_tokens: Token 明细
+- duration_seconds: 耗时（秒）
+- completed_at: 完成时间
+- session_key: 子会话 Key
+- source: 数据来源（task_update_api / task_flow:* / 外部上报）
 ```
 
 **ministers（大臣表）**

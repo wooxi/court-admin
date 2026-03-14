@@ -104,6 +104,11 @@
 - Token 用量统计（按大臣/按日）
 - 任务数量统计
 - 效率分析（平均处理时长）
+- 任务执行明细（每次完成任务一条，支持按大臣/时间筛选与分页）
+
+**统计口径：**
+- 任务执行明细仅统计功能启用后新产生的完成任务
+- 不做历史回填，不追溯旧任务
 
 ### 5. OpenClaw 配置管理
 
@@ -129,8 +134,9 @@
 1. **ministers** - 大臣配置表
 2. **tasks** - 任务表
 3. **task_flows** - 任务流转表
-4. **token_usage** - Token 用量表
-5. **openclaw_config** - 配置表
+4. **task_execution_details** - 任务执行明细表（完成任务的 Token/耗时快照）
+5. **token_usage** - Token 用量表
+6. **openclaw_config** - 配置表
 
 ### 表关系
 
@@ -138,6 +144,8 @@
 ministers (1) ──< (N) tasks (assignee)
 ministers (1) ──< (N) tasks (dispatcher)
 tasks (1) ──< (N) task_flows
+tasks (1) ──< (0..1) task_execution_details
+ministers (1) ──< (N) task_execution_details
 ministers (1) ──< (N) token_usage
 ```
 
@@ -193,9 +201,10 @@ POST   /api/flows              # 添加流转记录
 ### 统计报表
 
 ```
-GET    /api/stats/token        # Token 用量统计
-GET    /api/stats/tasks        # 任务统计
-GET    /api/stats/efficiency   # 效率统计
+GET    /api/stats/token             # Token 用量统计
+GET    /api/stats/tasks             # 任务统计
+GET    /api/stats/efficiency        # 效率统计
+GET    /api/stats/task-executions   # 任务执行明细 + 聚合统计（仅启用后新数据）
 ```
 
 ### 配置管理
@@ -262,7 +271,7 @@ POST   /api/config/reload      # 热重载配置
 1. **OpenClaw 热重载集成** - 调用 OpenClaw API 重新加载配置
 2. **用户认证系统** - 登录、JWT Token、权限控制
 3. **任务自动同步** - 从 OpenClaw 自动同步任务数据
-4. **Token 用量自动采集** - 从 OpenClaw 自动采集 Token 用量
+4. **Token 用量深度采集** - 已支持任务完成时落库明细，后续补充对更多上游来源的自动采集
 5. **飞书通知集成** - 任务状态变更通知
 6. **数据导出** - CSV/Excel 导出
 7. **单元测试** - 后端和前端的单元测试
