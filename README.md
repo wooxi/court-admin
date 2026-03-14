@@ -130,10 +130,11 @@ court-admin/
 - ✅ 时间线展示
 
 ### 4. 统计报表
-- ✅ Token 用量统计
-- ✅ 任务数量统计
-- ✅ 效率分析
-- ✅ 任务执行明细（Token 与耗时，支持筛选/分页）
+- ✅ 报表页整合重构（概览卡片 / 趋势图 / 明细表）
+- ✅ 去重后统一指标口径（以任务执行明细为 Token/耗时唯一来源）
+- ✅ 大臣趋势图（近 7 天 / 30 天，Token + 平均耗时）
+- ✅ 图表与明细联动（点击趋势日期自动过滤明细）
+- ✅ 任务状态统计（近 7 天 / 30 天）
 - ✅ 飞书多维表格集成
 
 ### 5. 定时任务
@@ -247,11 +248,40 @@ curl -X PUT http://localhost:9001/api/tasks/1 \
 
 # 查询任务执行明细（支持大臣 + 时间范围 + 分页）
 curl "http://localhost:9001/api/stats/task-executions?minister_id=5&page=1&page_size=20&start_time=2026-03-14T00:00:00%2B08:00&end_time=2026-03-14T23:59:59%2B08:00"
+
+# 查询按天趋势（支持 7/30 天 + 大臣筛选）
+curl "http://localhost:9001/api/stats/task-executions/trend?days=30&minister_id=5"
 ```
 
-> 说明：任务执行明细仅统计功能启用后新产生的完成任务数据，不做历史回填。
+> 说明：任务执行明细与趋势接口仅统计功能启用后新产生的完成任务数据，不做历史回填。
 
 ---
+
+## 📈 报表结构与口径（整合版）
+
+### 重构前后维度对照
+
+| 维度 | 重构前 | 重构后 | 处理方式 |
+|---|---|---|---|
+| Token 汇总 | `/api/stats/token`（`token_usage`）+ 明细表重复展示 `total_tokens` | 统一为 `/api/stats/task-executions` 与 `/api/stats/task-executions/trend`（`task_execution_details`） | 去重，保留单一来源 |
+| 耗时效率 | `/api/stats/efficiency`（任务表时间差）+ 明细表平均耗时 | 统一为任务执行明细口径（`duration_seconds`） | 去重，避免口径冲突 |
+| 任务状态 | `/api/stats/tasks` | 保留 `/api/stats/tasks`（仅用于状态类指标） | 保留 |
+| 明细展示 | 独立筛选区 + 汇总卡片，和其他模块重复 | 与全局 7/30 天、大臣筛选统一，图表点击可联动明细 | 重构联动 |
+
+### 最终指标字典（统一口径）
+
+| 指标 | 定义 | 统计口径 | 来源 API |
+|---|---|---|---|
+| 完成任务数 | 窗口内 `status=completed` 的任务数量 | 近 7/30 天，支持按大臣筛选 | `GET /api/stats/tasks` |
+| 任务完成率 | `completed / total * 100%` | 同上 | `GET /api/stats/tasks` |
+| 平均单任务 Token | `sum(total_tokens) / 记录数` | 仅统计任务执行明细启用后新增记录；支持按大臣、按日期窗口/联动日期 | `GET /api/stats/task-executions` |
+| 总 Token | `sum(total_tokens)` | 同上 | `GET /api/stats/task-executions` |
+| 平均耗时 | `avg(duration_seconds)` | 同上 | `GET /api/stats/task-executions` |
+| 总耗时 | `sum(duration_seconds)` | 同上 | `GET /api/stats/task-executions` |
+| Token 日趋势 | 按 `completed_at` 天聚合 `sum(total_tokens)` | 近 7/30 天，支持按大臣筛选 | `GET /api/stats/task-executions/trend` |
+| 耗时日趋势 | 按 `completed_at` 天聚合 `avg(duration_seconds)` | 近 7/30 天，支持按大臣筛选 | `GET /api/stats/task-executions/trend` |
+
+> 统一规则：仅统计任务执行明细功能启用后新增数据，不引入历史回填。
 
 ## 📊 数据库设计
 

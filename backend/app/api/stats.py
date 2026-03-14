@@ -18,12 +18,18 @@ from app.models.usage import TokenUsage
 router = APIRouter()
 
 
+def _resolve_days_range(days: int) -> tuple[date, date]:
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days - 1)
+    return start_date, end_date
+
+
 @router.get("/token")
 async def get_token_stats(
     days: int = Query(default=7, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
-    start_date = date.today() - timedelta(days=days)
+    start_date, end_date = _resolve_days_range(days)
 
     minister_stats = (
         db.query(
@@ -55,7 +61,7 @@ async def get_token_stats(
     return {
         "period": {
             "start": start_date.isoformat(),
-            "end": date.today().isoformat(),
+            "end": end_date.isoformat(),
             "days": days,
         },
         "total": {
@@ -81,7 +87,7 @@ async def get_task_stats(
     days: int = Query(default=30, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
-    start_date = date.today() - timedelta(days=days)
+    start_date, end_date = _resolve_days_range(days)
 
     completed_case = case((Task.status == "completed", 1), else_=0)
     processing_case = case((Task.status == "processing", 1), else_=0)
@@ -89,6 +95,7 @@ async def get_task_stats(
 
     minister_stats = (
         db.query(
+            Minister.id,
             Minister.name,
             Minister.department,
             func.count(Task.id).label("total"),
@@ -119,7 +126,7 @@ async def get_task_stats(
     return {
         "period": {
             "start": start_date.isoformat(),
-            "end": date.today().isoformat(),
+            "end": end_date.isoformat(),
             "days": days,
         },
         "total": {
@@ -131,6 +138,7 @@ async def get_task_stats(
         },
         "by_minister": [
             {
+                "id": int(stat.id),
                 "name": stat.name,
                 "department": stat.department,
                 "total": int(stat.total or 0),
@@ -151,7 +159,7 @@ async def get_efficiency_stats(
     days: int = Query(default=30, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
-    start_date = date.today() - timedelta(days=days)
+    start_date, end_date = _resolve_days_range(days)
 
     # 按大臣统计已完成任务平均耗时（小时）
     # 这里 SECOND 需作为 SQL 关键字字面量，不能做绑定参数
@@ -180,7 +188,7 @@ async def get_efficiency_stats(
     return {
         "period": {
             "start": start_date.isoformat(),
-            "end": date.today().isoformat(),
+            "end": end_date.isoformat(),
             "days": days,
         },
         "efficiency_ranking": [
@@ -193,6 +201,104 @@ async def get_efficiency_stats(
             }
             for row in rows
         ],
+    }
+
+
+@router.get("/task-executions/trend")
+async def get_task_execution_trend(
+    days: int = Query(default=7, ge=7, le=30),
+    minister_id: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    按天聚合任务执行趋势（仅统计启用后新增数据）。
+
+    - 支持 7 天 / 30 天窗口
+    - 支持按大臣筛选
+    - 指标：每日 token 总量、每日总耗时、每日平均耗时、任务数
+    """
+    start_date, end_date = _resolve_days_range(days)
+    start_time = datetime.combine(start_date, datetime.min.time())
+    end_time = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
+    filters = [
+        TaskExecutionDetail.completed_at >= start_time,
+        TaskExecutionDetail.completed_at < end_time,
+    ]
+    if minister_id:
+        filters.append(TaskExecutionDetail.minister_id == minister_id)
+
+    day_expr = func.date(TaskExecutionDetail.completed_at)
+    rows = (
+        db.query(
+            day_expr.label("day"),
+            func.count(TaskExecutionDetail.id).label("task_count"),
+            func.coalesce(func.sum(TaskExecutionDetail.total_tokens), 0).label("total_tokens"),
+            func.coalesce(func.sum(TaskExecutionDetail.duration_seconds), 0).label("total_duration_seconds"),
+            func.coalesce(func.avg(TaskExecutionDetail.duration_seconds), 0).label("avg_duration_seconds"),
+        )
+        .filter(*filters)
+        .group_by(day_expr)
+        .order_by(day_expr.asc())
+        .all()
+    )
+
+    row_map: dict[str, object] = {}
+    for row in rows:
+        day_key = row.day.isoformat() if hasattr(row.day, "isoformat") else str(row.day)
+        row_map[day_key] = row
+
+    trend = []
+    cursor = start_date
+    while cursor <= end_date:
+        key = cursor.isoformat()
+        row = row_map.get(key)
+
+        if row:
+            task_count = int(getattr(row, "task_count", 0) or 0)
+            total_tokens = int(getattr(row, "total_tokens", 0) or 0)
+            total_duration_seconds = int(getattr(row, "total_duration_seconds", 0) or 0)
+            avg_duration_seconds = round(float(getattr(row, "avg_duration_seconds", 0) or 0), 2)
+        else:
+            task_count = 0
+            total_tokens = 0
+            total_duration_seconds = 0
+            avg_duration_seconds = 0
+
+        trend.append(
+            {
+                "date": key,
+                "task_count": task_count,
+                "total_tokens": total_tokens,
+                "total_duration_seconds": total_duration_seconds,
+                "avg_duration_seconds": avg_duration_seconds,
+            }
+        )
+
+        cursor += timedelta(days=1)
+
+    minister = None
+    if minister_id:
+        minister_row = db.query(Minister.id, Minister.name, Minister.department).filter(Minister.id == minister_id).first()
+        if minister_row:
+            minister = {
+                "id": minister_row.id,
+                "name": minister_row.name,
+                "department": minister_row.department,
+            }
+
+    return {
+        "period": {
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat(),
+            "days": days,
+        },
+        "filters": {
+            "minister_id": minister_id,
+            "minister": minister,
+        },
+        "trend": trend,
+        "note": "仅统计任务执行明细功能启用后产生的新完成任务数据，不回填历史任务。",
     }
 
 

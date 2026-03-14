@@ -101,14 +101,39 @@
 ### 4. 统计报表
 
 **功能：**
-- Token 用量统计（按大臣/按日）
-- 任务数量统计
-- 效率分析（平均处理时长）
-- 任务执行明细（每次完成任务一条，支持按大臣/时间筛选与分页）
+- 报表页整合重构（概览卡片 / 趋势图 / 明细表）
+- 任务状态统计（近 7 天 / 30 天，支持按大臣筛选）
+- 任务执行趋势（Token 总量 + 平均耗时，按天聚合）
+- 任务执行明细（每次完成任务一条，支持分页）
+- 图表点击日期联动明细表过滤
 
 **统计口径：**
+- Token 与耗时统一基于 `task_execution_details`
+- 任务状态类指标基于 `tasks`
 - 任务执行明细仅统计功能启用后新产生的完成任务
 - 不做历史回填，不追溯旧任务
+
+**重构前后维度对照：**
+
+| 维度 | 重构前 | 重构后 | 说明 |
+|---|---|---|---|
+| Token 统计 | `/stats/token` + 明细重复显示 | 统一到 `/stats/task-executions` + `/stats/task-executions/trend` | 去重 |
+| 耗时效率 | `/stats/efficiency` + 明细平均耗时 | 统一到 `duration_seconds` 明细口径 | 去重/统一口径 |
+| 任务状态 | `/stats/tasks` | 保留 `/stats/tasks` | 状态类唯一来源 |
+| 交互 | 多块独立筛选 | 统一 7/30 天 + 大臣筛选 + 图表联动明细 | 可读性提升 |
+
+**最终指标字典：**
+
+| 指标 | 定义 | 来源 API |
+|---|---|---|
+| 完成任务数 | `status=completed` 的任务数 | `/api/stats/tasks` |
+| 任务完成率 | `completed / total * 100%` | `/api/stats/tasks` |
+| 平均单任务 Token | `avg(total_tokens)` | `/api/stats/task-executions` |
+| 总 Token | `sum(total_tokens)` | `/api/stats/task-executions` |
+| 平均耗时 | `avg(duration_seconds)` | `/api/stats/task-executions` |
+| 总耗时 | `sum(duration_seconds)` | `/api/stats/task-executions` |
+| Token 日趋势 | 按天 `sum(total_tokens)` | `/api/stats/task-executions/trend` |
+| 耗时日趋势 | 按天 `avg(duration_seconds)` | `/api/stats/task-executions/trend` |
 
 ### 5. OpenClaw 配置管理
 
@@ -201,10 +226,11 @@ POST   /api/flows              # 添加流转记录
 ### 统计报表
 
 ```
-GET    /api/stats/token             # Token 用量统计
-GET    /api/stats/tasks             # 任务统计
-GET    /api/stats/efficiency        # 效率统计
-GET    /api/stats/task-executions   # 任务执行明细 + 聚合统计（仅启用后新数据）
+GET    /api/stats/tasks                     # 任务状态统计（近 7/30 天）
+GET    /api/stats/task-executions           # 任务执行明细 + 聚合统计（仅启用后新数据）
+GET    /api/stats/task-executions/trend     # 任务执行趋势（按天，Token + 耗时）
+GET    /api/stats/token                     # Token 用量统计（兼容保留）
+GET    /api/stats/efficiency                # 效率统计（兼容保留）
 ```
 
 ### 配置管理
