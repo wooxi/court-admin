@@ -10,9 +10,12 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.models import get_db
+from app.models.scheduler_run_history import SchedulerRunHistory
 from app.settings import get_settings
 
 router = APIRouter()
@@ -75,6 +78,7 @@ class SchedulerRunItem(BaseModel):
     duration_ms: Optional[int] = None
     status: str = "unknown"
     result: Optional[str] = None
+    source: Optional[str] = None
 
 
 class SchedulerOverviewResponse(BaseModel):
@@ -86,8 +90,7 @@ class SchedulerOverviewResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
-@router.get("/overview", response_model=SchedulerOverviewResponse)
-async def get_scheduler_overview():
+def _build_scheduler_overview(db: Session) -> SchedulerOverviewResponse:
     warnings: List[str] = []
     errors: List[str] = []
 
@@ -114,6 +117,12 @@ async def get_scheduler_overview():
         # 合并 run 信息到 task 摘要字段
         _attach_run_summary(tasks_map, runs)
 
+        persist_result = _persist_scheduler_runs(db, runs, tasks_map)
+        if persist_result["inserted"] or persist_result["updated"]:
+            warnings.append(
+                f"scheduler_run_history 已同步：新增 {persist_result['inserted']}，更新 {persist_result['updated']}"
+            )
+
         all_tasks = sorted(tasks_map.values(), key=lambda x: x.id)
         all_runs = sorted(runs, key=lambda x: x.started_at, reverse=True)[:200]
 
@@ -126,6 +135,7 @@ async def get_scheduler_overview():
             errors=errors,
         )
     except Exception as e:  # noqa: BLE001 - 对外返回可读错误，避免裸 500
+        db.rollback()
         errors.append(f"构建定时任务总览失败：{e}")
         return SchedulerOverviewResponse(
             ok=False,
@@ -137,16 +147,21 @@ async def get_scheduler_overview():
         )
 
 
+@router.get("/overview", response_model=SchedulerOverviewResponse)
+async def get_scheduler_overview(db: Session = Depends(get_db)):
+    return _build_scheduler_overview(db)
+
+
 @router.get('/jobs')
-async def list_scheduler_jobs():
-    overview = await get_scheduler_overview()
+async def list_scheduler_jobs(db: Session = Depends(get_db)):
+    overview = _build_scheduler_overview(db)
     return overview.tasks
 
 
 @router.get('/tasks')
-async def list_scheduler_tasks():
+async def list_scheduler_tasks(db: Session = Depends(get_db)):
     """/tasks 作为 /jobs 别名，兼容不同前端调用。"""
-    overview = await get_scheduler_overview()
+    overview = _build_scheduler_overview(db)
     return overview.tasks
 
 
@@ -154,17 +169,96 @@ async def list_scheduler_tasks():
 async def list_scheduler_runs(
     limit: int = Query(default=20, ge=1, le=200),
     task_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
 ):
-    overview = await get_scheduler_overview()
+    overview = _build_scheduler_overview(db)
     runs = overview.runs
     if task_id:
         runs = [item for item in runs if item.task_id == task_id]
     return runs[:limit]
 
 
+@router.get('/run-history')
+async def list_scheduler_run_history(
+    task_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    start_time: Optional[datetime] = Query(default=None),
+    end_time: Optional[datetime] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    if start_time and end_time and start_time > end_time:
+        return {
+            "items": [],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": 0,
+                "total_pages": 0,
+            },
+            "filters": {
+                "task_id": task_id,
+                "status": status,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+            },
+            "note": "start_time 大于 end_time，返回空结果。",
+        }
+
+    query = db.query(SchedulerRunHistory)
+    if task_id:
+        query = query.filter(SchedulerRunHistory.task_id == task_id)
+    if status:
+        query = query.filter(SchedulerRunHistory.status == status)
+    if start_time:
+        query = query.filter(SchedulerRunHistory.started_at >= start_time)
+    if end_time:
+        query = query.filter(SchedulerRunHistory.started_at <= end_time)
+
+    total = query.order_by(None).count()
+    rows = (
+        query.order_by(SchedulerRunHistory.started_at.desc(), SchedulerRunHistory.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "task_id": row.task_id,
+                "task_name": row.task_name,
+                "started_at": row.started_at,
+                "ended_at": row.ended_at,
+                "duration_ms": row.duration_ms,
+                "status": row.status,
+                "result": row.result,
+                "source": row.source,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+            for row in rows
+        ],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": int(total or 0),
+            "total_pages": (int(total or 0) + page_size - 1) // page_size if total else 0,
+        },
+        "filters": {
+            "task_id": task_id,
+            "status": status,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
+        },
+    }
+
+
 @router.get('/jobs/{job_id}')
-async def get_scheduler_job(job_id: str):
-    overview = await get_scheduler_overview()
+async def get_scheduler_job(job_id: str, db: Session = Depends(get_db)):
+    overview = _build_scheduler_overview(db)
     task = next((item for item in overview.tasks if item.id == job_id), None)
     if task is None:
         raise HTTPException(status_code=404, detail=f'任务不存在：{job_id}')
@@ -175,10 +269,118 @@ async def get_scheduler_job(job_id: str):
 async def get_scheduler_job_runs(
     job_id: str,
     limit: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
 ):
-    overview = await get_scheduler_overview()
+    overview = _build_scheduler_overview(db)
     runs = [item for item in overview.runs if item.task_id == job_id]
     return runs[:limit]
+
+
+def _run_source_priority(source: str | None) -> int:
+    if not source:
+        return 0
+    if source.startswith("logs"):
+        return 30
+    if source.startswith("cache"):
+        return 20
+    if source.startswith("openclaw_config"):
+        return 10
+    return 0
+
+
+def _deduplicate_runs(runs: List[SchedulerRunItem]) -> List[SchedulerRunItem]:
+    """按 task_id + started_at 去重，优先保留来源更可靠/状态更明确的记录。"""
+    sorted_runs = sorted(
+        runs,
+        key=lambda item: (
+            item.started_at,
+            _run_source_priority(item.source),
+            1 if item.status and item.status != "unknown" else 0,
+        ),
+        reverse=True,
+    )
+
+    dedup: Dict[Tuple[str, datetime], SchedulerRunItem] = {}
+    for run in sorted_runs:
+        key = (run.task_id, run.started_at)
+        if key not in dedup:
+            dedup[key] = run
+
+    return list(dedup.values())
+
+
+def _persist_scheduler_runs(
+    db: Session,
+    runs: List[SchedulerRunItem],
+    tasks_map: Dict[str, SchedulerTaskItem],
+) -> Dict[str, int]:
+    normalized_runs = _deduplicate_runs(runs)
+    if not normalized_runs:
+        return {"inserted": 0, "updated": 0}
+
+    task_ids = {run.task_id for run in normalized_runs}
+    min_started_at = min(run.started_at for run in normalized_runs)
+    max_started_at = max(run.started_at for run in normalized_runs)
+
+    existing_rows = (
+        db.query(SchedulerRunHistory)
+        .filter(
+            SchedulerRunHistory.task_id.in_(task_ids),
+            SchedulerRunHistory.started_at >= min_started_at,
+            SchedulerRunHistory.started_at <= max_started_at,
+        )
+        .all()
+    )
+    existing_map = {(row.task_id, row.started_at): row for row in existing_rows}
+
+    inserted = 0
+    updated = 0
+
+    for run in normalized_runs:
+        key = (run.task_id, run.started_at)
+        task_name = tasks_map.get(run.task_id).name if tasks_map.get(run.task_id) else run.task_id
+        payload = {
+            "task_id": run.task_id,
+            "task_name": task_name,
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "duration_ms": run.duration_ms,
+            "status": run.status or "unknown",
+            "result": run.result,
+            "source": run.source or "scheduler_overview",
+            "raw_payload": {
+                "task_id": run.task_id,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+                "duration_ms": run.duration_ms,
+                "status": run.status,
+                "result": run.result,
+                "source": run.source,
+            },
+        }
+
+        existing = existing_map.get(key)
+        if existing:
+            changed = False
+            for field in ("task_name", "ended_at", "duration_ms", "status", "result", "source", "raw_payload"):
+                incoming = payload[field]
+                if incoming is None:
+                    continue
+                if getattr(existing, field) != incoming:
+                    setattr(existing, field, incoming)
+                    changed = True
+            if changed:
+                db.add(existing)
+                updated += 1
+            continue
+
+        db.add(SchedulerRunHistory(**payload))
+        inserted += 1
+
+    if inserted or updated:
+        db.commit()
+
+    return {"inserted": inserted, "updated": updated}
 
 
 def _safe_load_openclaw_config(*, warnings: List[str], errors: List[str]) -> Optional[Dict[str, Any]]:
@@ -292,7 +494,7 @@ def _load_cached_scheduler_data(*, warnings: List[str], errors: List[str]) -> Tu
             if file_path.suffix == ".jsonl":
                 file_runs = _load_runs_from_jsonl(file_path)
                 for run in file_runs:
-                    parsed = _mapping_to_run(run)
+                    parsed = _mapping_to_run(run, source=f"cache:{source}")
                     if parsed:
                         runs.append(parsed)
                 continue
@@ -305,7 +507,7 @@ def _load_cached_scheduler_data(*, warnings: List[str], errors: List[str]) -> Tu
                         tasks.append(parsed_task)
 
                 for item in raw.get("runs", []) or []:
-                    parsed_run = _mapping_to_run(item)
+                    parsed_run = _mapping_to_run(item, source=f"cache:{source}")
                     if parsed_run:
                         runs.append(parsed_run)
 
@@ -328,7 +530,7 @@ def _load_cached_scheduler_data(*, warnings: List[str], errors: List[str]) -> Tu
 
             elif isinstance(raw, list):
                 for item in raw:
-                    parsed_run = _mapping_to_run(item)
+                    parsed_run = _mapping_to_run(item, source=f"cache:{source}")
                     if parsed_run:
                         runs.append(parsed_run)
 
@@ -411,6 +613,7 @@ def _build_tasks_and_runs_from_logs(*, warnings: List[str]) -> Tuple[List[Schedu
             log_file,
             task_id=task_id,
             start_markers=spec["start_markers"],
+            source=source,
         )
         runs.extend(task_runs)
 
@@ -436,7 +639,13 @@ def _build_tasks_and_runs_from_logs(*, warnings: List[str]) -> Tuple[List[Schedu
     return tasks, runs
 
 
-def _parse_runs_from_log(log_file: Path, *, task_id: str, start_markers: List[str]) -> List[SchedulerRunItem]:
+def _parse_runs_from_log(
+    log_file: Path,
+    *,
+    task_id: str,
+    start_markers: List[str],
+    source: Optional[str] = None,
+) -> List[SchedulerRunItem]:
     lines = _tail_lines(log_file, max_bytes=900_000)
     entries: List[Tuple[datetime, str, str]] = []
 
@@ -483,6 +692,7 @@ def _parse_runs_from_log(log_file: Path, *, task_id: str, start_markers: List[st
                 duration_ms=duration_ms,
                 status=status,
                 result=result,
+                source=source,
             )
         )
 
@@ -602,7 +812,7 @@ def _mapping_to_task(raw: Any, *, source: str) -> Optional[SchedulerTaskItem]:
     )
 
 
-def _mapping_to_run(raw: Any) -> Optional[SchedulerRunItem]:
+def _mapping_to_run(raw: Any, *, source: Optional[str] = None) -> Optional[SchedulerRunItem]:
     if not isinstance(raw, dict):
         return None
 
@@ -628,6 +838,8 @@ def _mapping_to_run(raw: Any) -> Optional[SchedulerRunItem]:
     status = _as_str(_pick_first(raw, RUN_STATUS_KEYS)) or "unknown"
     result = _as_str(_pick_first(raw, RUN_RESULT_KEYS))
 
+    run_source = source or _as_str(_pick_first(raw, ("source", "data_source")))
+
     return SchedulerRunItem(
         task_id=task_id,
         started_at=started_at,
@@ -635,6 +847,7 @@ def _mapping_to_run(raw: Any) -> Optional[SchedulerRunItem]:
         duration_ms=duration_ms,
         status=status,
         result=result,
+        source=run_source,
     )
 
 

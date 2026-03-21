@@ -32,7 +32,7 @@ Base = declarative_base()
 def init_db() -> None:
     """初始化数据库表"""
     # 导入所有模型，确保 metadata 完整
-    from app.models import minister, task, flow, usage, config_model, task_execution  # noqa: F401
+    from app.models import minister, task, flow, usage, config_model, task_execution, scheduler_run_history  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
