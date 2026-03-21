@@ -1,121 +1,103 @@
 <template>
-  <div class="stats">
-    <h1>📈 统计报表（整合重构版）</h1>
+  <div class="stats-page">
+    <div class="page-header">
+      <div>
+        <h1>📈 统计报表</h1>
+        <p class="subtitle">统一口径：token / 耗时来自 task_execution_details，状态来自 tasks</p>
+      </div>
+      <el-button :loading="loading" @click="loadAll(false)">刷新报表</el-button>
+    </div>
 
-    <el-card class="filter-card" style="margin-bottom: 16px;">
-      <div class="card-header filters-header">
-        <div class="filters-left">
-          <span class="filter-label">统计窗口</span>
+    <el-card class="filter-card" shadow="never">
+      <div class="filter-wrap">
+        <div class="filter-item">
+          <span class="label">统计窗口</span>
           <el-radio-group v-model="periodDays" size="small">
             <el-radio-button :value="7">近 7 天</el-radio-button>
             <el-radio-button :value="30">近 30 天</el-radio-button>
+            <el-radio-button :value="90">近 90 天</el-radio-button>
           </el-radio-group>
-
-          <span class="filter-label">大臣筛选</span>
-          <el-select v-model="selectedMinisterId" placeholder="全部大臣" clearable style="width: 150px;">
-            <el-option
-              v-for="minister in ministers"
-              :key="minister.id"
-              :label="minister.name"
-              :value="minister.id"
-            />
-          </el-select>
         </div>
 
-        <div class="filters-right">
-          <el-tag v-if="linkedDate" type="warning" closable @close="clearLinkedDate">
-            图表联动日期：{{ linkedDate }}
-          </el-tag>
-          <el-button size="small" @click="refreshAll">刷新</el-button>
+        <div class="filter-item">
+          <span class="label">部门筛选</span>
+          <el-select v-model="selectedDepartment" placeholder="六部全量" clearable style="width: 180px">
+            <el-option
+              v-for="dept in departmentOptions"
+              :key="dept"
+              :label="dept"
+              :value="dept"
+            />
+          </el-select>
         </div>
       </div>
     </el-card>
 
-    <el-row :gutter="12" class="overview-row">
-      <el-col
-        v-for="item in metricCards"
-        :key="item.key"
-        :xs="24"
-        :sm="12"
-        :md="8"
-        :lg="8"
-        :xl="4"
-      >
-        <el-card class="overview-card" shadow="hover">
-          <div class="summary-label">{{ item.label }}</div>
-          <div class="summary-value">{{ item.value }}</div>
-          <div class="summary-desc">{{ item.desc }}</div>
+    <el-row :gutter="12" class="kpi-row">
+      <el-col v-for="item in kpiCards" :key="item.key" :xs="12" :sm="12" :md="8" :lg="6" :xl="4">
+        <el-card class="kpi-card" shadow="hover">
+          <div class="kpi-label">{{ item.label }}</div>
+          <div class="kpi-value">{{ item.value }}</div>
+          <div class="kpi-desc">{{ item.desc }}</div>
         </el-card>
       </el-col>
     </el-row>
 
-    <el-card style="margin-bottom: 16px;">
+    <el-card shadow="never" class="chart-card">
       <template #header>
         <div class="card-header">
-          <span>📉 执行趋势（Token / 平均耗时）</span>
-          <span class="header-tip">点击图中某天可联动下方明细表</span>
+          <span>📉 每日 Token 总消耗 vs 平均耗时</span>
+          <span class="tip">{{ scopeLabel }}</span>
         </div>
       </template>
-      <div ref="trendChart" style="height: 360px;"></div>
+      <div ref="trendChartRef" class="chart-box"></div>
     </el-card>
 
-    <el-card style="margin-bottom: 16px;">
-      <template #header>
-        <span>📋 任务状态（{{ periodLabel }}）</span>
-      </template>
+    <el-row :gutter="12" class="chart-row">
+      <el-col :xs="24" :lg="8">
+        <el-card shadow="never" class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span>🥧 六部任务量占比</span>
+              <span class="tip">按执行明细任务量</span>
+            </div>
+          </template>
+          <div ref="deptPieRef" class="chart-box small"></div>
+        </el-card>
+      </el-col>
 
-      <el-table :data="taskStatsView" stripe>
-        <el-table-column prop="name" label="大臣" width="110" />
-        <el-table-column prop="department" label="部门" width="110" />
-        <el-table-column prop="total" label="总数" width="90" />
-        <el-table-column prop="completed" label="完成" width="90" />
-        <el-table-column prop="processing" label="进行中" width="90" />
-        <el-table-column prop="pending" label="待处理" width="90" />
-        <el-table-column prop="completion_rate" label="完成率" min-width="180">
+      <el-col :xs="24" :lg="16">
+        <el-card shadow="never" class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span>📊 各部门任务状态分布（堆叠）</span>
+              <span class="tip">待处理 / 进行中 / 已完成</span>
+            </div>
+          </template>
+          <div ref="statusStackRef" class="chart-box small"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-card shadow="never" class="detail-card">
+      <template #header>
+        <div class="card-header">
+          <span>🧾 部门状态明细</span>
+          <span class="tip">{{ scopeLabel }}</span>
+        </div>
+      </template>
+      <el-table :data="deptStatusRows" stripe>
+        <el-table-column prop="department" label="部门" min-width="140" />
+        <el-table-column prop="pending" label="待处理" width="100" />
+        <el-table-column prop="processing" label="进行中" width="100" />
+        <el-table-column prop="completed" label="已完成" width="100" />
+        <el-table-column prop="total" label="总计" width="100" />
+        <el-table-column label="完成率" min-width="180">
           <template #default="{ row }">
-            <el-progress :percentage="Number(row.completion_rate || 0)" :stroke-width="10" />
+            <el-progress :percentage="row.rate" :stroke-width="10" />
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
-
-    <el-card>
-      <template #header>
-        <div class="card-header execution-header">
-          <span>🧾 任务执行明细（仅启用后新增数据）</span>
-          <span class="header-tip">当前范围：{{ executionScopeLabel }}</span>
-        </div>
-      </template>
-
-      <el-table :data="executionDetails" stripe v-loading="executionLoading">
-        <el-table-column prop="task_id" label="任务 ID" min-width="180" />
-        <el-table-column prop="minister_name" label="大臣" width="110" />
-        <el-table-column prop="minister_department" label="部门" width="110" />
-        <el-table-column prop="input_tokens" label="输入 Token" width="110" />
-        <el-table-column prop="output_tokens" label="输出 Token" width="110" />
-        <el-table-column prop="total_tokens" label="总 Token" width="110" />
-        <el-table-column prop="duration_seconds" label="耗时" width="130">
-          <template #default="{ row }">{{ formatDuration(row.duration_seconds) }}</template>
-        </el-table-column>
-        <el-table-column prop="completed_at" label="完成时间" min-width="170">
-          <template #default="{ row }">{{ formatDateTime(row.completed_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="session_key" label="会话 Key" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="source" label="来源" min-width="140" />
-      </el-table>
-
-      <div class="pagination-wrap">
-        <el-pagination
-          background
-          layout="total, sizes, prev, pager, next"
-          :current-page="executionPagination.page"
-          :page-size="executionPagination.page_size"
-          :page-sizes="[10, 20, 50, 100]"
-          :total="executionPagination.total"
-          @size-change="handleExecutionPageSizeChange"
-          @current-change="handleExecutionPageChange"
-        />
-      </div>
     </el-card>
   </div>
 </template>
@@ -124,7 +106,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import {
   GridComponent,
   LegendComponent,
@@ -132,495 +114,548 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-import api from '@/api'
+import { fetchExecutionReport, fetchTaskStatusStats } from '@/api/stats'
+import { fetchMinisters } from '@/api/tasks'
 
-echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+echarts.use([LineChart, PieChart, BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-const trendChart = ref(null)
+const loading = ref(false)
+const periodDays = ref(30)
+const selectedDepartment = ref('')
 const ministers = ref([])
 
-const periodDays = ref(7)
-const selectedMinisterId = ref(null)
-const linkedDate = ref('')
+const reportData = ref(emptyReport())
+const deptStatusRows = ref([])
 
-const taskStatsData = ref({
-  total: {
-    total: 0,
-    completed: 0,
-    processing: 0,
-    pending: 0,
-    completion_rate: 0,
-  },
-  by_minister: [],
-})
-const trendRows = ref([])
+const trendChartRef = ref(null)
+const deptPieRef = ref(null)
+const statusStackRef = ref(null)
 
-const executionLoading = ref(false)
-const executionDetails = ref([])
-const executionSummary = ref({
-  total_records: 0,
-  total_tokens: 0,
-  avg_tokens_per_task: 0,
-  avg_duration_seconds: 0,
-  total_duration_seconds: 0,
-})
-const executionPagination = ref({
-  page: 1,
-  page_size: 20,
-  total: 0,
-})
+let trendChart = null
+let deptPieChart = null
+let statusStackChart = null
 
-let trendChartInstance = null
-
-const selectedMinister = computed(() => {
-  if (!selectedMinisterId.value) return null
-  return ministers.value.find((item) => item.id === selectedMinisterId.value) || null
-})
-
-const periodLabel = computed(() => `近 ${periodDays.value} 天`)
-
-const executionScopeLabel = computed(() => {
-  const ministerText = selectedMinister.value ? `，${selectedMinister.value.name}` : ''
-  if (linkedDate.value) {
-    return `${linkedDate.value}（图表联动）${ministerText}`
-  }
-  return `${periodLabel.value}${ministerText}`
-})
-
-const taskSummary = computed(() => {
-  if (!selectedMinisterId.value) {
-    return taskStatsData.value.total || {
-      total: 0,
-      completed: 0,
-      processing: 0,
-      pending: 0,
+function emptyReport() {
+  return {
+    period: { days: 0 },
+    kpi: {
+      total_tasks: 0,
+      completed_tasks: 0,
       completion_rate: 0,
-    }
+      execution_records: 0,
+      total_tokens: 0,
+      avg_tokens_per_task: 0,
+      total_duration_seconds: 0,
+      avg_duration_seconds: 0,
+    },
+    daily_trend: [],
+    dept_distribution: [],
+    status_distribution: [],
   }
-
-  const row = (taskStatsData.value.by_minister || []).find((item) => item.id === selectedMinisterId.value)
-  return row || {
-    total: 0,
-    completed: 0,
-    processing: 0,
-    pending: 0,
-    completion_rate: 0,
-  }
-})
-
-const taskStatsView = computed(() => {
-  const rows = taskStatsData.value.by_minister || []
-  if (selectedMinisterId.value) {
-    return rows.filter((row) => row.id === selectedMinisterId.value)
-  }
-  return rows
-})
-
-const metricCards = computed(() => [
-  {
-    key: 'completed',
-    label: '完成任务数',
-    value: formatNumber(taskSummary.value.completed),
-    desc: `口径：${executionScopeLabel.value}`,
-  },
-  {
-    key: 'completion_rate',
-    label: '任务完成率',
-    value: `${Number(taskSummary.value.completion_rate || 0).toFixed(2)}%`,
-    desc: '来源：/api/stats/tasks',
-  },
-  {
-    key: 'avg_tokens',
-    label: '平均单任务 Token',
-    value: formatNumber(executionSummary.value.avg_tokens_per_task),
-    desc: '来源：/api/stats/task-executions',
-  },
-  {
-    key: 'avg_duration',
-    label: '平均耗时',
-    value: formatDuration(executionSummary.value.avg_duration_seconds),
-    desc: '来源：/api/stats/task-executions',
-  },
-  {
-    key: 'total_tokens',
-    label: '总 Token',
-    value: formatNumber(executionSummary.value.total_tokens),
-    desc: '来源：/api/stats/task-executions',
-  },
-  {
-    key: 'total_duration',
-    label: '总耗时',
-    value: formatDuration(executionSummary.value.total_duration_seconds),
-    desc: '来源：/api/stats/task-executions',
-  },
-])
-
-const formatDateTime = (value) => {
-  if (!value) return '-'
-  return new Date(value).toLocaleString('zh-CN')
 }
+
+const departmentOptions = computed(() => {
+  const set = new Set(ministers.value.map((item) => item.department).filter(Boolean))
+  return [...set]
+})
+
+const selectedAssigneeIds = computed(() => {
+  if (!selectedDepartment.value) return []
+  return ministers.value
+    .filter((item) => item.department === selectedDepartment.value)
+    .map((item) => item.id)
+})
+
+const scopeLabel = computed(() => {
+  const deptText = selectedDepartment.value ? ` · ${selectedDepartment.value}` : ' · 六部全量'
+  return `近 ${periodDays.value} 天${deptText}`
+})
+
+const kpiCards = computed(() => {
+  const kpi = reportData.value.kpi || {}
+  return [
+    {
+      key: 'total_tasks',
+      label: '任务总量',
+      value: formatNumber(kpi.total_tasks),
+      desc: scopeLabel.value,
+    },
+    {
+      key: 'completed_tasks',
+      label: '已完成',
+      value: formatNumber(kpi.completed_tasks),
+      desc: `完成率 ${Number(kpi.completion_rate || 0).toFixed(2)}%`,
+    },
+    {
+      key: 'execution_records',
+      label: '执行记录',
+      value: formatNumber(kpi.execution_records),
+      desc: '来源：聚合报表 API',
+    },
+    {
+      key: 'total_tokens',
+      label: '总 Token',
+      value: formatNumber(kpi.total_tokens),
+      desc: '口径：task_execution_details',
+    },
+    {
+      key: 'avg_tokens_per_task',
+      label: '平均单任务 Token',
+      value: formatNumber(kpi.avg_tokens_per_task),
+      desc: '聚合字段',
+    },
+    {
+      key: 'avg_duration_seconds',
+      label: '平均耗时',
+      value: formatDuration(kpi.avg_duration_seconds),
+      desc: `总耗时 ${formatDuration(kpi.total_duration_seconds)}`,
+    },
+  ]
+})
 
 const formatNumber = (value) => {
   const num = Number(value || 0)
-  if (Number.isNaN(num)) return '0'
-
-  if (Number.isInteger(num)) {
-    return num.toLocaleString('zh-CN')
-  }
-
-  return num.toLocaleString('zh-CN', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })
+  if (!Number.isFinite(num)) return '0'
+  if (Number.isInteger(num)) return num.toLocaleString('zh-CN')
+  return num.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
 const formatDuration = (seconds) => {
-  if (seconds === null || seconds === undefined) return '-'
-  const sec = Number(seconds)
-  if (Number.isNaN(sec)) return '-'
-
+  const sec = Number(seconds || 0)
+  if (!Number.isFinite(sec) || sec <= 0) return '0 秒'
   if (sec < 60) return `${sec.toFixed(0)} 秒`
   if (sec < 3600) return `${(sec / 60).toFixed(1)} 分钟`
   return `${(sec / 3600).toFixed(2)} 小时`
 }
 
-const getWindowRange = () => {
-  if (linkedDate.value) {
-    const start = new Date(`${linkedDate.value}T00:00:00`)
-    const end = new Date(`${linkedDate.value}T23:59:59.999`)
-    return { start, end }
-  }
-
-  const end = new Date()
-  end.setHours(23, 59, 59, 999)
-
-  const start = new Date(end)
-  start.setDate(end.getDate() - (periodDays.value - 1))
-  start.setHours(0, 0, 0, 0)
-
-  return { start, end }
+const normalizeStatus = (status) => {
+  if (!status) return 'pending'
+  const value = String(status).toLowerCase()
+  if (value.includes('completed') || value.includes('success') || value.includes('done')) return 'completed'
+  if (value.includes('processing') || value.includes('running')) return 'processing'
+  return 'pending'
 }
 
-const buildTrendParams = () => {
-  const params = { days: periodDays.value }
-  if (selectedMinisterId.value) {
-    params.minister_id = selectedMinisterId.value
+const mergeReports = (payloads = []) => {
+  if (!payloads.length) return emptyReport()
+
+  const merged = emptyReport()
+  const dayMap = new Map()
+  const deptMap = new Map()
+  const statusMap = new Map()
+
+  for (const report of payloads) {
+    const kpi = report.kpi || {}
+    merged.kpi.total_tasks += Number(kpi.total_tasks || 0)
+    merged.kpi.completed_tasks += Number(kpi.completed_tasks || 0)
+    merged.kpi.execution_records += Number(kpi.execution_records || 0)
+    merged.kpi.total_tokens += Number(kpi.total_tokens || 0)
+    merged.kpi.total_duration_seconds += Number(kpi.total_duration_seconds || 0)
+
+    for (const row of report.daily_trend || []) {
+      const key = row.date
+      if (!dayMap.has(key)) {
+        dayMap.set(key, {
+          date: key,
+          task_count: 0,
+          total_tokens: 0,
+          total_duration_seconds: 0,
+        })
+      }
+      const target = dayMap.get(key)
+      target.task_count += Number(row.task_count || 0)
+      target.total_tokens += Number(row.total_tokens || 0)
+      target.total_duration_seconds += Number(row.total_duration_seconds || 0)
+    }
+
+    for (const row of report.dept_distribution || []) {
+      const key = row.department || '未分组'
+      if (!deptMap.has(key)) {
+        deptMap.set(key, {
+          department: key,
+          task_count: 0,
+          total_tokens: 0,
+          total_duration_seconds: 0,
+        })
+      }
+      const target = deptMap.get(key)
+      target.task_count += Number(row.task_count || 0)
+      target.total_tokens += Number(row.total_tokens || 0)
+      target.total_duration_seconds += Number(row.total_duration_seconds || 0)
+    }
+
+    for (const row of report.status_distribution || []) {
+      const key = normalizeStatus(row.status)
+      statusMap.set(key, (statusMap.get(key) || 0) + Number(row.count || 0))
+    }
   }
-  return params
+
+  merged.kpi.completion_rate =
+    merged.kpi.total_tasks > 0 ? Number(((merged.kpi.completed_tasks / merged.kpi.total_tasks) * 100).toFixed(2)) : 0
+  merged.kpi.avg_tokens_per_task =
+    merged.kpi.execution_records > 0
+      ? Number((merged.kpi.total_tokens / merged.kpi.execution_records).toFixed(2))
+      : 0
+  merged.kpi.avg_duration_seconds =
+    merged.kpi.execution_records > 0
+      ? Number((merged.kpi.total_duration_seconds / merged.kpi.execution_records).toFixed(2))
+      : 0
+
+  merged.daily_trend = [...dayMap.values()]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((row) => ({
+      ...row,
+      avg_duration_seconds: row.task_count > 0 ? Number((row.total_duration_seconds / row.task_count).toFixed(2)) : 0,
+      avg_tokens_per_task: row.task_count > 0 ? Number((row.total_tokens / row.task_count).toFixed(2)) : 0,
+    }))
+
+  merged.dept_distribution = [...deptMap.values()].sort((a, b) => b.task_count - a.task_count)
+  merged.status_distribution = ['pending', 'processing', 'completed'].map((status) => ({
+    status,
+    count: statusMap.get(status) || 0,
+  }))
+
+  merged.period.days = periodDays.value
+  return merged
 }
 
-const buildExecutionParams = (page = executionPagination.value.page) => {
-  const params = {
-    page,
-    page_size: executionPagination.value.page_size,
+const loadReportData = async () => {
+  const assigneeIds = selectedAssigneeIds.value
+
+  if (!selectedDepartment.value || assigneeIds.length === 0) {
+    reportData.value = await fetchExecutionReport({ days: periodDays.value })
+    return
   }
 
-  if (selectedMinisterId.value) {
-    params.minister_id = selectedMinisterId.value
+  if (assigneeIds.length === 1) {
+    reportData.value = await fetchExecutionReport({ days: periodDays.value, assignee_id: assigneeIds[0] })
+    return
   }
 
-  const { start, end } = getWindowRange()
-  params.start_time = start.toISOString()
-  params.end_time = end.toISOString()
+  const reportRows = await Promise.all(
+    assigneeIds.map((assigneeId) => fetchExecutionReport({ days: periodDays.value, assignee_id: assigneeId }))
+  )
+  reportData.value = mergeReports(reportRows)
+}
 
-  return params
+const loadDeptStatus = async () => {
+  const payload = await fetchTaskStatusStats({ days: periodDays.value })
+  const rows = payload.by_minister || []
+
+  const map = new Map()
+  rows.forEach((item) => {
+    const department = item.department || '未分组'
+    if (!map.has(department)) {
+      map.set(department, {
+        department,
+        pending: 0,
+        processing: 0,
+        completed: 0,
+        total: 0,
+        rate: 0,
+      })
+    }
+    const target = map.get(department)
+    target.pending += Number(item.pending || 0)
+    target.processing += Number(item.processing || 0)
+    target.completed += Number(item.completed || 0)
+    target.total += Number(item.total || 0)
+  })
+
+  const merged = [...map.values()].map((item) => ({
+    ...item,
+    rate: item.total > 0 ? Number(((item.completed / item.total) * 100).toFixed(2)) : 0,
+  }))
+
+  deptStatusRows.value = selectedDepartment.value
+    ? merged.filter((item) => item.department === selectedDepartment.value)
+    : merged
 }
 
 const renderTrendChart = () => {
-  if (!trendChart.value) return
+  if (!trendChartRef.value) return
+  if (!trendChart) trendChart = echarts.init(trendChartRef.value)
 
-  if (!trendChartInstance) {
-    trendChartInstance = echarts.init(trendChart.value)
-  }
+  const rows = reportData.value.daily_trend || []
 
-  const dates = trendRows.value.map((item) => item.date)
-
-  trendChartInstance.setOption({
+  trendChart.setOption({
     tooltip: {
       trigger: 'axis',
       formatter: (items = []) => {
         if (!items.length) return ''
-        const tokenPoint = items.find((item) => item.seriesName === 'Token 总量')
-        const durationPoint = items.find((item) => item.seriesName === '平均耗时（小时）')
-        const source = tokenPoint?.data?.raw || durationPoint?.data?.raw
-
-        const taskCount = source ? source.task_count : 0
-        const totalDurationSeconds = source ? source.total_duration_seconds : 0
-
+        const tokenPoint = items.find((item) => item.seriesName === 'Token 总消耗')
+        const durationPoint = items.find((item) => item.seriesName === '平均耗时（分钟）')
         return [
           `<div>${items[0].axisValue}</div>`,
-          `<div>${tokenPoint?.marker || ''} Token 总量：${formatNumber(tokenPoint?.value || 0)}</div>`,
-          `<div>${durationPoint?.marker || ''} 平均耗时：${Number(durationPoint?.value || 0).toFixed(2)} 小时</div>`,
-          `<div>任务数：${formatNumber(taskCount)}</div>`,
-          `<div>总耗时：${formatDuration(totalDurationSeconds)}</div>`,
+          `<div>${tokenPoint?.marker || ''} Token 总消耗：${formatNumber(tokenPoint?.value || 0)}</div>`,
+          `<div>${durationPoint?.marker || ''} 平均耗时：${Number(durationPoint?.value || 0).toFixed(2)} 分钟</div>`,
         ].join('')
       },
     },
-    legend: { data: ['Token 总量', '平均耗时（小时）'] },
-    grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
+    legend: { data: ['Token 总消耗', '平均耗时（分钟）'] },
+    grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
     xAxis: {
       type: 'category',
-      data: dates,
-      axisLabel: {
-        formatter: (value) => value.slice(5),
-      },
+      data: rows.map((row) => row.date),
+      axisLabel: { formatter: (value) => value.slice(5) },
     },
     yAxis: [
-      {
-        type: 'value',
-        name: 'Token',
-      },
-      {
-        type: 'value',
-        name: '小时',
-      },
+      { type: 'value', name: 'Token' },
+      { type: 'value', name: '分钟' },
     ],
     series: [
       {
-        name: 'Token 总量',
+        name: 'Token 总消耗',
         type: 'line',
         smooth: true,
         yAxisIndex: 0,
-        itemStyle: { color: '#409EFF' },
+        itemStyle: { color: '#6a9eff' },
         lineStyle: { width: 3 },
-        data: trendRows.value.map((item) => ({
-          value: item.total_tokens,
-          raw: item,
-        })),
-        markLine: {
-          symbol: 'none',
-          label: { show: false },
-          lineStyle: { color: '#E6A23C', type: 'dashed' },
-          data: linkedDate.value ? [{ xAxis: linkedDate.value }] : [],
-        },
+        data: rows.map((row) => Number(row.total_tokens || 0)),
       },
       {
-        name: '平均耗时（小时）',
+        name: '平均耗时（分钟）',
         type: 'line',
         smooth: true,
         yAxisIndex: 1,
-        itemStyle: { color: '#67C23A' },
+        itemStyle: { color: '#2ecc8a' },
         lineStyle: { width: 3 },
-        data: trendRows.value.map((item) => ({
-          value: Number((Number(item.avg_duration_seconds || 0) / 3600).toFixed(2)),
-          raw: item,
+        data: rows.map((row) => Number((Number(row.avg_duration_seconds || 0) / 60).toFixed(2))),
+      },
+    ],
+  })
+}
+
+const renderDeptPie = () => {
+  if (!deptPieRef.value) return
+  if (!deptPieChart) deptPieChart = echarts.init(deptPieRef.value)
+
+  const rows = (reportData.value.dept_distribution || []).filter((item) => Number(item.task_count || 0) > 0)
+  deptPieChart.setOption({
+    tooltip: { trigger: 'item' },
+    legend: { bottom: 0, type: 'scroll' },
+    series: [
+      {
+        name: '任务量占比',
+        type: 'pie',
+        radius: ['35%', '68%'],
+        center: ['50%', '46%'],
+        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 1 },
+        label: {
+          formatter: ({ name, percent }) => `${name}\n${percent}%`,
+        },
+        data: rows.map((row) => ({
+          name: row.department,
+          value: Number(row.task_count || 0),
         })),
       },
     ],
   })
+}
 
-  trendChartInstance.off('click')
-  trendChartInstance.on('click', async (params) => {
-    if (!params?.name) return
-    linkedDate.value = params.name
-    executionPagination.value.page = 1
-    renderTrendChart()
-    await loadExecutionDetails(1, { silent: true })
+const renderStatusStack = () => {
+  if (!statusStackRef.value) return
+  if (!statusStackChart) statusStackChart = echarts.init(statusStackRef.value)
+
+  const rows = deptStatusRows.value || []
+
+  statusStackChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: ['待处理', '进行中', '已完成'] },
+    grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: rows.map((row) => row.department),
+    },
+    yAxis: { type: 'value', name: '任务数' },
+    series: [
+      {
+        name: '待处理',
+        type: 'bar',
+        stack: 'status',
+        itemStyle: { color: '#909399' },
+        data: rows.map((row) => row.pending),
+      },
+      {
+        name: '进行中',
+        type: 'bar',
+        stack: 'status',
+        itemStyle: { color: '#e6a23c' },
+        data: rows.map((row) => row.processing),
+      },
+      {
+        name: '已完成',
+        type: 'bar',
+        stack: 'status',
+        itemStyle: { color: '#67c23a' },
+        data: rows.map((row) => row.completed),
+      },
+    ],
   })
 }
 
-const loadTaskStats = async ({ silent = false } = {}) => {
-  try {
-    const data = await api.get('/stats/tasks', {
-      params: {
-        days: periodDays.value,
-      },
-    })
-
-    taskStatsData.value = {
-      total: data.total || {
-        total: 0,
-        completed: 0,
-        processing: 0,
-        pending: 0,
-        completion_rate: 0,
-      },
-      by_minister: data.by_minister || [],
-    }
-  } catch (error) {
-    if (!silent) {
-      ElMessage.error(error?.response?.data?.detail || '加载任务状态统计失败')
-    }
-    console.error(error)
-  }
+const renderAllCharts = () => {
+  renderTrendChart()
+  renderDeptPie()
+  renderStatusStack()
 }
 
-const loadTrend = async ({ silent = false } = {}) => {
+const loadAll = async (silent = true) => {
+  if (!silent) loading.value = true
   try {
-    const data = await api.get('/stats/task-executions/trend', {
-      params: buildTrendParams(),
-    })
-
-    trendRows.value = data.trend || []
-    renderTrendChart()
+    await Promise.all([loadReportData(), loadDeptStatus()])
+    renderAllCharts()
   } catch (error) {
-    if (!silent) {
-      ElMessage.error(error?.response?.data?.detail || '加载趋势图失败')
-    }
-    console.error(error)
-  }
-}
-
-const loadExecutionDetails = async (page = 1, { silent = false } = {}) => {
-  executionLoading.value = true
-  try {
-    const data = await api.get('/stats/task-executions', {
-      params: buildExecutionParams(page),
-    })
-
-    executionDetails.value = data.items || []
-    executionSummary.value = {
-      total_records: data.summary?.total_records || 0,
-      total_tokens: data.summary?.total_tokens || 0,
-      avg_tokens_per_task: data.summary?.avg_tokens_per_task || 0,
-      avg_duration_seconds: data.summary?.avg_duration_seconds || 0,
-      total_duration_seconds: data.summary?.total_duration_seconds || 0,
-    }
-
-    executionPagination.value = {
-      page: data.pagination?.page || page,
-      page_size: data.pagination?.page_size || executionPagination.value.page_size,
-      total: data.pagination?.total || 0,
-    }
-  } catch (error) {
-    if (!silent) {
-      ElMessage.error(error?.response?.data?.detail || '加载任务执行明细失败')
-    }
+    ElMessage.error(error?.response?.data?.detail || '加载报表失败')
     console.error(error)
   } finally {
-    executionLoading.value = false
+    if (!silent) loading.value = false
   }
-}
-
-const loadAll = async ({ silent = false } = {}) => {
-  await Promise.all([
-    loadTaskStats({ silent }),
-    loadTrend({ silent }),
-    loadExecutionDetails(executionPagination.value.page, { silent }),
-  ])
-}
-
-const refreshAll = async () => {
-  await loadAll({ silent: false })
-}
-
-const clearLinkedDate = async () => {
-  linkedDate.value = ''
-  executionPagination.value.page = 1
-  renderTrendChart()
-  await loadExecutionDetails(1, { silent: true })
-}
-
-const handleExecutionPageChange = async (page) => {
-  executionPagination.value.page = page
-  await loadExecutionDetails(page)
-}
-
-const handleExecutionPageSizeChange = async (size) => {
-  executionPagination.value.page_size = size
-  executionPagination.value.page = 1
-  await loadExecutionDetails(1)
 }
 
 const handleResize = () => {
-  trendChartInstance?.resize()
+  trendChart?.resize()
+  deptPieChart?.resize()
+  statusStackChart?.resize()
 }
 
-watch([periodDays, selectedMinisterId], async () => {
-  linkedDate.value = ''
-  executionPagination.value.page = 1
-  await loadAll({ silent: true })
+watch([periodDays, selectedDepartment], async () => {
+  await loadAll(true)
 })
 
 onMounted(async () => {
   try {
-    ministers.value = await api.get('/ministers/')
+    ministers.value = await fetchMinisters()
+    await loadAll(false)
+    window.addEventListener('resize', handleResize)
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '加载大臣列表失败')
+    ElMessage.error('加载统计页面失败')
     console.error(error)
   }
-
-  await loadAll({ silent: false })
-  window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
-  trendChartInstance?.dispose()
-  trendChartInstance = null
+  trendChart?.dispose()
+  deptPieChart?.dispose()
+  statusStackChart?.dispose()
+  trendChart = null
+  deptPieChart = null
+  statusStackChart = null
 })
 </script>
 
 <style scoped>
-.stats h1 {
-  margin-bottom: 20px;
-  color: #303133;
+.stats-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.page-header h1 {
+  font-size: 22px;
+}
+
+.subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filter-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kpi-row {
+  margin-bottom: 4px;
+}
+
+.kpi-card {
+  margin-bottom: 10px;
+  min-height: 108px;
+}
+
+.kpi-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.kpi-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.kpi-desc {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chart-row {
+  margin-top: -2px;
+}
+
+.chart-card {
+  border-color: var(--line);
+}
+
+.detail-card {
+  margin-bottom: 8px;
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.filters-header {
-  flex-wrap: wrap;
-}
-
-.filters-left,
-.filters-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.filter-label {
-  font-size: 13px;
-  color: #606266;
-}
-
-.header-tip {
-  color: #909399;
+.tip {
+  color: var(--muted);
   font-size: 12px;
 }
 
-.overview-row {
-  margin-bottom: 16px;
+.chart-box {
+  height: 340px;
 }
 
-.overview-card {
-  margin-bottom: 12px;
-  min-height: 114px;
+.chart-box.small {
+  height: 300px;
 }
 
-.summary-label {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 8px;
-}
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
 
-.summary-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #303133;
-  line-height: 1.2;
-}
-
-.summary-desc {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #a8abb2;
-}
-
-.execution-header {
-  flex-wrap: wrap;
-}
-
-.pagination-wrap {
-  margin-top: 16px;
-  display: flex;
-  justify-content: flex-end;
+  .chart-box,
+  .chart-box.small {
+    height: 280px;
+  }
 }
 </style>

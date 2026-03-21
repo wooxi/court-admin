@@ -3,9 +3,9 @@
     <div class="page-header">
       <div>
         <h1>⏰ 定时任务总览</h1>
-        <p class="subtitle">查看任务定义、最新状态与最近执行结果</p>
+        <p class="subtitle">正式接口：jobs / detail / history</p>
       </div>
-      <el-button type="primary" @click="loadJobs">
+      <el-button type="primary" @click="loadJobs(false)">
         <el-icon><Refresh /></el-icon>
         刷新
       </el-button>
@@ -18,11 +18,7 @@
       show-icon
       :closable="false"
       class="error-alert"
-    >
-      <template #default>
-        <el-button link type="danger" @click="loadJobs">重试</el-button>
-      </template>
-    </el-alert>
+    />
 
     <div class="scheduler-grid">
       <el-card class="jobs-card" v-loading="loadingJobs" shadow="never">
@@ -45,19 +41,17 @@
           max-height="560"
           size="small"
         >
-          <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="source" label="来源" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="schedule" label="调度表达式 / 触发条件" min-width="220" show-overflow-tooltip />
-          <el-table-column label="启用状态" width="98">
+          <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="source" label="来源" min-width="130" show-overflow-tooltip />
+          <el-table-column prop="schedule" label="调度表达式" min-width="220" show-overflow-tooltip />
+          <el-table-column label="状态" width="92">
             <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-                {{ row.enabled ? '启用' : '停用' }}
-              </el-tag>
+              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="下次运行" min-width="170">
             <template #default="{ row }">
-              {{ formatDate(row.nextRunTime) }}
+              {{ formatDate(row.next_run) }}
             </template>
           </el-table-column>
         </el-table>
@@ -68,36 +62,25 @@
           <template #header>
             <div class="card-header">
               <span>🧾 任务详情</span>
-              <el-button v-if="selectedJob" text @click="loadJobDetail(selectedJob)">刷新详情</el-button>
+              <el-button v-if="selectedJob" text @click="loadJobDetail()">刷新详情</el-button>
             </div>
           </template>
 
           <el-empty v-if="!selectedJob" description="请选择左侧任务查看详情" />
 
           <template v-else>
-            <el-alert
-              v-if="detailError"
-              :title="detailError"
-              type="warning"
-              show-icon
-              :closable="false"
-              class="inner-alert"
-            >
-              <template #default>
-                <el-button link type="warning" @click="loadJobDetail(selectedJob)">重试</el-button>
-              </template>
-            </el-alert>
-
             <el-descriptions :column="1" border>
+              <el-descriptions-item label="任务 ID">{{ selectedJob.id }}</el-descriptions-item>
               <el-descriptions-item label="任务名称">{{ selectedJob.name }}</el-descriptions-item>
-              <el-descriptions-item label="最近一次运行时间">{{ formatDate(detail?.lastRunTime) }}</el-descriptions-item>
+              <el-descriptions-item label="调度表达式">{{ detail?.schedule || selectedJob.schedule || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="最近执行时间">{{ formatDate(detail?.last_run || selectedJob.last_run) }}</el-descriptions-item>
               <el-descriptions-item label="最近状态">
-                <el-tag :type="getStatusType(detail?.lastStatus)">
-                  {{ getStatusText(detail?.lastStatus) }}
+                <el-tag :type="getStatusType(detail?.last_status || selectedJob.last_status)">
+                  {{ getStatusText(detail?.last_status || selectedJob.last_status) }}
                 </el-tag>
               </el-descriptions-item>
-              <el-descriptions-item label="最近日志摘要">
-                <div class="log-summary">{{ detail?.lastLogSummary || '暂无日志摘要' }}</div>
+              <el-descriptions-item label="最近摘要">
+                <div class="log-summary">{{ detail?.last_result || selectedJob.last_result || '暂无摘要' }}</div>
               </el-descriptions-item>
             </el-descriptions>
           </template>
@@ -105,15 +88,20 @@
 
         <el-card class="history-card" v-loading="loadingHistory" shadow="never">
           <template #header>
-            <div class="card-header">
-              <span>🕘 执行历史（最近 N 次）</span>
+            <div class="card-header history-header">
+              <span>🕘 执行历史（history）</span>
               <div class="header-actions">
-                <el-select v-model="historyLimit" size="small" style="width: 110px">
-                  <el-option :value="10" label="最近 10 次" />
-                  <el-option :value="20" label="最近 20 次" />
-                  <el-option :value="50" label="最近 50 次" />
+                <el-select v-model="historyStatus" clearable size="small" style="width: 120px" placeholder="全部状态">
+                  <el-option label="成功" value="success" />
+                  <el-option label="失败" value="failed" />
+                  <el-option label="执行中" value="running" />
+                  <el-option label="等待中" value="pending" />
                 </el-select>
-                <el-button v-if="selectedJob" text @click="loadRunHistory(selectedJob)">刷新</el-button>
+                <el-select v-model="historyPagination.page_size" size="small" style="width: 110px">
+                  <el-option :value="10" label="10 / 页" />
+                  <el-option :value="20" label="20 / 页" />
+                  <el-option :value="50" label="50 / 页" />
+                </el-select>
               </div>
             </div>
           </template>
@@ -121,54 +109,68 @@
           <el-empty v-if="!selectedJob" description="请选择左侧任务查看执行历史" />
 
           <template v-else>
-            <el-alert
-              v-if="historyError"
-              :title="historyError"
-              type="warning"
-              show-icon
-              :closable="false"
-              class="inner-alert"
-            >
-              <template #default>
-                <el-button link type="warning" @click="loadRunHistory(selectedJob)">重试</el-button>
-              </template>
-            </el-alert>
-
-            <el-empty v-if="!loadingHistory && historyList.length === 0" description="暂无执行历史" />
-
-            <el-table v-else :data="historyList" size="small" max-height="360">
-              <el-table-column label="开始时间" min-width="160">
-                <template #default="{ row }">{{ formatDate(row.startTime) }}</template>
+            <el-table :data="historyList" size="small" max-height="350">
+              <el-table-column label="执行时间" min-width="170">
+                <template #default="{ row }">{{ formatDate(row.started_at) }}</template>
               </el-table-column>
-              <el-table-column label="结束时间" min-width="160">
-                <template #default="{ row }">{{ formatDate(row.endTime) }}</template>
-              </el-table-column>
-              <el-table-column label="耗时" width="96">
-                <template #default="{ row }">{{ formatDuration(row) }}</template>
-              </el-table-column>
-              <el-table-column label="状态" width="96">
+              <el-table-column label="状态" width="100">
                 <template #default="{ row }">
                   <el-tag :type="getStatusType(row.status)" size="small">{{ getStatusText(row.status) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="summary" label="结果摘要" min-width="220" show-overflow-tooltip>
+              <el-table-column label="耗时" width="110">
+                <template #default="{ row }">{{ formatDurationMs(row.duration_ms) }}</template>
+              </el-table-column>
+              <el-table-column label="Token" width="110">
+                <template #default="{ row }">{{ formatTokenValue(extractToken(row)) }}</template>
+              </el-table-column>
+              <el-table-column prop="source" label="来源" min-width="130" show-overflow-tooltip />
+              <el-table-column label="日志" width="90">
                 <template #default="{ row }">
-                  {{ row.summary || '-' }}
+                  <el-button text type="primary" @click="openLogDialog(row)">查看</el-button>
                 </template>
               </el-table-column>
             </el-table>
+
+            <div class="pagination-wrap">
+              <el-pagination
+                background
+                layout="total, prev, pager, next"
+                :current-page="historyPagination.page"
+                :page-size="historyPagination.page_size"
+                :total="historyPagination.total"
+                @current-change="handleHistoryPageChange"
+              />
+            </div>
           </template>
         </el-card>
       </div>
     </div>
+
+    <el-dialog v-model="logDialog.visible" title="执行日志" width="760px">
+      <div class="log-meta">
+        <el-tag :type="getStatusType(logDialog.row?.status)">{{ getStatusText(logDialog.row?.status) }}</el-tag>
+        <span>执行时间：{{ formatDate(logDialog.row?.started_at) }}</span>
+        <span>耗时：{{ formatDurationMs(logDialog.row?.duration_ms) }}</span>
+      </div>
+      <pre class="log-content">{{ logDialog.content }}</pre>
+      <template #footer>
+        <el-button @click="logDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 
-import api from '@/api'
+import {
+  fetchSchedulerJobDetail,
+  fetchSchedulerJobs,
+  fetchSchedulerRunHistory,
+} from '@/api/scheduler'
 
 const loadingJobs = ref(false)
 const loadingDetail = ref(false)
@@ -178,272 +180,146 @@ const jobs = ref([])
 const selectedJobId = ref('')
 const detail = ref(null)
 const historyList = ref([])
-const historyLimit = ref(10)
+const historyStatus = ref('')
 
 const pageError = ref('')
-const detailError = ref('')
-const historyError = ref('')
+const historyPagination = ref({
+  page: 1,
+  page_size: 20,
+  total: 0,
+})
 
-const selectedJob = computed(() => jobs.value.find((job) => job.id === selectedJobId.value) || null)
+const logDialog = ref({
+  visible: false,
+  row: null,
+  content: '',
+})
 
-const isNotFound = (error) => error?.response?.status === 404
-const formatError = (error) => error?.response?.data?.detail || error?.message || '请求失败'
-
-const normalizeBoolean = (value) => {
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value > 0
-  if (typeof value === 'string') {
-    const normalized = value.toLowerCase()
-    if (['enabled', 'enable', 'active', 'on', 'true', 'running'].includes(normalized)) return true
-    if (['disabled', 'disable', 'inactive', 'off', 'false', 'stopped'].includes(normalized)) return false
-  }
-  return false
-}
+const selectedJob = computed(() => jobs.value.find((item) => item.id === selectedJobId.value) || null)
 
 const normalizeStatus = (status) => {
   if (!status) return 'unknown'
   const value = String(status).toLowerCase()
-  if (['success', 'completed', 'done', 'ok', 'succeeded', 'finished'].some((v) => value.includes(v))) return 'success'
-  if (['failed', 'error', 'exception', 'timeout'].some((v) => value.includes(v))) return 'failed'
-  if (['running', 'processing', 'executing'].some((v) => value.includes(v))) return 'running'
-  if (['pending', 'waiting', 'queued'].some((v) => value.includes(v))) return 'pending'
-  if (['skipped', 'ignore'].some((v) => value.includes(v))) return 'skipped'
+  if (['success', 'completed', 'done', 'ok', 'finished'].some((item) => value.includes(item))) return 'success'
+  if (['failed', 'error', 'exception', 'timeout'].some((item) => value.includes(item))) return 'failed'
+  if (['running', 'processing', 'executing'].some((item) => value.includes(item))) return 'running'
+  if (['pending', 'waiting', 'queued'].some((item) => value.includes(item))) return 'pending'
   return value
 }
 
 const getStatusType = (status) => {
-  const normalized = normalizeStatus(status)
-  if (normalized === 'success') return 'success'
-  if (normalized === 'failed') return 'danger'
-  if (normalized === 'running') return 'warning'
-  if (normalized === 'pending') return 'info'
+  const value = normalizeStatus(status)
+  if (value === 'success') return 'success'
+  if (value === 'failed') return 'danger'
+  if (value === 'running') return 'warning'
   return 'info'
 }
 
 const getStatusText = (status) => {
-  const normalized = normalizeStatus(status)
-  if (normalized === 'success') return '成功'
-  if (normalized === 'failed') return '失败'
-  if (normalized === 'running') return '执行中'
-  if (normalized === 'pending') return '等待中'
-  if (normalized === 'skipped') return '已跳过'
-  if (normalized === 'unknown') return '未知'
+  const value = normalizeStatus(status)
+  if (value === 'success') return '成功'
+  if (value === 'failed') return '失败'
+  if (value === 'running') return '执行中'
+  if (value === 'pending') return '等待中'
+  if (value === 'unknown') return '未知'
   return String(status)
-}
-
-const resolveArray = (payload) => {
-  if (Array.isArray(payload)) return payload
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload?.jobs)) return payload.jobs
-  if (Array.isArray(payload?.runs)) return payload.runs
-  if (Array.isArray(payload?.history)) return payload.history
-  if (Array.isArray(payload?.list)) return payload.list
-  if (Array.isArray(payload?.data)) return payload.data
-  return []
-}
-
-const resolveObject = (payload) => {
-  if (!payload || Array.isArray(payload)) return null
-  return payload.job || payload.item || payload.data || payload
-}
-
-const normalizeJob = (rawJob, index) => {
-  const id = String(rawJob?.id ?? rawJob?.job_id ?? rawJob?.code ?? rawJob?.name ?? `job_${index}`)
-  const name = rawJob?.name ?? rawJob?.job_name ?? rawJob?.title ?? `任务 ${index + 1}`
-  const source = rawJob?.source ?? rawJob?.origin ?? rawJob?.module ?? rawJob?.owner ?? '-'
-  const schedule =
-    rawJob?.cron_expression ??
-    rawJob?.cron ??
-    rawJob?.schedule ??
-    rawJob?.trigger ??
-    rawJob?.trigger_condition ??
-    rawJob?.trigger_desc ??
-    '-'
-
-  return {
-    id,
-    name,
-    source,
-    schedule,
-    enabled: normalizeBoolean(rawJob?.enabled ?? rawJob?.is_enabled ?? rawJob?.active ?? rawJob?.status),
-    nextRunTime: rawJob?.next_run_time ?? rawJob?.next_run ?? rawJob?.next_trigger_time ?? rawJob?.nextRunAt ?? null,
-    lastRunTime: rawJob?.last_run_time ?? rawJob?.last_run ?? rawJob?.latest_run_time ?? null,
-    lastStatus: rawJob?.last_status ?? rawJob?.latest_status ?? rawJob?.last_result ?? null,
-    lastLogSummary:
-      rawJob?.last_log_summary ?? rawJob?.log_summary ?? rawJob?.latest_log ?? rawJob?.last_message ?? '',
-    embeddedRuns: resolveArray(rawJob?.recent_runs ?? rawJob?.runs ?? rawJob?.history),
-    raw: rawJob,
-  }
-}
-
-const normalizeDetail = (rawDetail, fallbackJob) => ({
-  lastRunTime:
-    rawDetail?.last_run_time ??
-    rawDetail?.last_run ??
-    rawDetail?.latest_run_time ??
-    rawDetail?.latest_run?.start_time ??
-    fallbackJob?.lastRunTime ??
-    null,
-  lastStatus:
-    rawDetail?.last_status ??
-    rawDetail?.latest_status ??
-    rawDetail?.last_result ??
-    rawDetail?.latest_run?.status ??
-    fallbackJob?.lastStatus ??
-    null,
-  lastLogSummary:
-    rawDetail?.last_log_summary ??
-    rawDetail?.log_summary ??
-    rawDetail?.latest_log ??
-    rawDetail?.latest_run?.summary ??
-    fallbackJob?.lastLogSummary ??
-    '',
-})
-
-const normalizeRun = (rawRun) => {
-  const startTime = rawRun?.start_time ?? rawRun?.started_at ?? rawRun?.startAt ?? null
-  const endTime = rawRun?.end_time ?? rawRun?.ended_at ?? rawRun?.finished_at ?? rawRun?.endAt ?? null
-
-  let durationMs = rawRun?.duration_ms ?? rawRun?.durationMs ?? null
-  if (typeof durationMs !== 'number' && typeof rawRun?.duration === 'number') {
-    durationMs = rawRun.duration > 1000 ? rawRun.duration : rawRun.duration * 1000
-  }
-
-  return {
-    startTime,
-    endTime,
-    durationMs,
-    durationText: rawRun?.duration_text ?? null,
-    status: rawRun?.status ?? rawRun?.state ?? rawRun?.result_status ?? (rawRun?.success === false ? 'failed' : 'success'),
-    summary: rawRun?.result_summary ?? rawRun?.summary ?? rawRun?.message ?? rawRun?.output ?? '',
-  }
 }
 
 const formatDate = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
 
-const formatDuration = (run) => {
-  if (run?.durationText) return run.durationText
-
-  let durationMs = typeof run?.durationMs === 'number' ? run.durationMs : null
-
-  if (!durationMs && run?.startTime && run?.endTime) {
-    const ms = new Date(run.endTime).getTime() - new Date(run.startTime).getTime()
-    if (!Number.isNaN(ms) && ms > 0) durationMs = ms
-  }
-
-  if (!durationMs || durationMs <= 0) return '-'
-  if (durationMs < 1000) return `${Math.round(durationMs)}ms`
-  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`
-  if (durationMs < 3_600_000) return `${(durationMs / 60_000).toFixed(1)}m`
-  return `${(durationMs / 3_600_000).toFixed(1)}h`
+const formatDurationMs = (durationMs) => {
+  const value = Number(durationMs)
+  if (!Number.isFinite(value) || value <= 0) return '-'
+  if (value < 1000) return `${Math.round(value)} ms`
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`
+  if (value < 3_600_000) return `${(value / 60_000).toFixed(1)} 分`
+  return `${(value / 3_600_000).toFixed(1)} 时`
 }
 
-const tryRequests = async (requestFns) => {
-  for (const requestFn of requestFns) {
-    try {
-      return await requestFn()
-    } catch (error) {
-      if (isNotFound(error)) continue
-      throw error
-    }
+const formatTokenValue = (value) => {
+  if (value === null || value === undefined) return '--'
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '--'
+  return num.toLocaleString('zh-CN')
+}
+
+const extractToken = (row) => {
+  const directKeys = ['total_tokens', 'token_total', 'tokens', 'totalTokens']
+  for (const key of directKeys) {
+    const value = row?.[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value)
   }
+
+  const text = row?.result || ''
+  if (typeof text === 'string') {
+    const match = text.match(/(?:total[_\s-]?tokens?|token(?:总量|总消耗)?)[^\d]{0,12}(\d+)/i)
+    if (match) return Number(match[1])
+  }
+
   return null
 }
 
-const loadJobs = async () => {
-  loadingJobs.value = true
+const loadJobs = async (silent = true) => {
+  if (!silent) loadingJobs.value = true
   pageError.value = ''
 
   try {
-    const result = await tryRequests([
-      () => api.get('/scheduler/jobs', { params: { limit: 200 } }),
-      () => api.get('/scheduler/jobs/', { params: { limit: 200 } }),
-      () => api.get('/scheduler', { params: { limit: 200 } }),
-      () => api.get('/scheduler/overview'),
-      () => api.get('/cron/jobs', { params: { limit: 200 } }),
-    ])
+    const rows = await fetchSchedulerJobs()
+    jobs.value = Array.isArray(rows) ? rows : []
 
-    if (!result) {
-      jobs.value = []
-      selectedJobId.value = ''
-      detail.value = null
-      historyList.value = []
-      pageError.value = '后端暂未提供定时任务接口（建议检查 /api/scheduler/*）。'
-      return
-    }
-
-    const rawJobs = resolveArray(result)
-    jobs.value = rawJobs.map(normalizeJob)
-
-    if (jobs.value.length === 0) {
+    if (!jobs.value.length) {
       selectedJobId.value = ''
       detail.value = null
       historyList.value = []
       return
     }
 
-    const current = jobs.value.find((job) => job.id === selectedJobId.value) || jobs.value[0]
-    await handleSelectJob(current)
+    const current = jobs.value.find((item) => item.id === selectedJobId.value) || jobs.value[0]
+    selectedJobId.value = current.id
+    await Promise.all([loadJobDetail(), loadRunHistory()])
   } catch (error) {
+    pageError.value = error?.response?.data?.detail || '加载定时任务失败'
     jobs.value = []
-    selectedJobId.value = ''
     detail.value = null
     historyList.value = []
-    pageError.value = formatError(error)
   } finally {
-    loadingJobs.value = false
+    if (!silent) loadingJobs.value = false
   }
 }
 
-const loadJobDetail = async (job) => {
-  if (!job) return
-
-  detailError.value = ''
+const loadJobDetail = async () => {
+  if (!selectedJob.value) return
   loadingDetail.value = true
-  detail.value = normalizeDetail(job.raw, job)
-
   try {
-    const result = await tryRequests([
-      () => api.get(`/scheduler/jobs/${encodeURIComponent(job.id)}`),
-      () => api.get(`/scheduler/job/${encodeURIComponent(job.id)}`),
-      () => api.get('/scheduler/job', { params: { job_id: job.id } }),
-      () => api.get(`/cron/jobs/${encodeURIComponent(job.id)}`),
-    ])
-
-    if (!result) return
-
-    const detailData = resolveObject(result)
-    if (detailData) {
-      detail.value = normalizeDetail({ ...job.raw, ...detailData }, job)
-    }
+    detail.value = await fetchSchedulerJobDetail(selectedJob.value.id)
   } catch (error) {
-    detailError.value = formatError(error)
+    detail.value = selectedJob.value
+    ElMessage.error(error?.response?.data?.detail || '加载任务详情失败')
   } finally {
     loadingDetail.value = false
   }
 }
 
-const loadRunHistory = async (job) => {
-  if (!job) return
+const loadRunHistory = async () => {
+  if (!selectedJob.value) return
 
-  historyError.value = ''
   loadingHistory.value = true
-  historyList.value = job.embeddedRuns.map(normalizeRun).slice(0, historyLimit.value)
-
   try {
-    const result = await tryRequests([
-      () => api.get(`/scheduler/jobs/${encodeURIComponent(job.id)}/runs`, { params: { limit: historyLimit.value } }),
-      () => api.get(`/scheduler/jobs/${encodeURIComponent(job.id)}/history`, { params: { limit: historyLimit.value } }),
-      () => api.get('/scheduler/history', { params: { job_id: job.id, limit: historyLimit.value } }),
-      () => api.get(`/cron/jobs/${encodeURIComponent(job.id)}/runs`, { params: { limit: historyLimit.value } }),
-    ])
+    const params = {
+      task_id: selectedJob.value.id,
+      page: historyPagination.value.page,
+      page_size: historyPagination.value.page_size,
+    }
+    if (historyStatus.value) params.status = historyStatus.value
 
-    if (!result) return
-
-    const rows = resolveArray(result)
-    historyList.value = rows.map(normalizeRun).slice(0, historyLimit.value)
+    const payload = await fetchSchedulerRunHistory(params)
+    historyList.value = payload.items || []
+    historyPagination.value.total = Number(payload.pagination?.total || 0)
   } catch (error) {
-    historyError.value = formatError(error)
+    historyList.value = []
+    historyPagination.value.total = 0
+    ElMessage.error(error?.response?.data?.detail || '加载执行历史失败')
   } finally {
     loadingHistory.value = false
   }
@@ -452,32 +328,34 @@ const loadRunHistory = async (job) => {
 const handleSelectJob = async (job) => {
   if (!job?.id) return
   selectedJobId.value = job.id
-  await Promise.all([loadJobDetail(job), loadRunHistory(job)])
+  historyPagination.value.page = 1
+  await Promise.all([loadJobDetail(), loadRunHistory()])
 }
 
-const onGlobalRefresh = () => {
-  loadJobs().catch((error) => {
-    console.error('刷新定时任务失败', error)
-  })
+const handleHistoryPageChange = async (page) => {
+  historyPagination.value.page = page
+  await loadRunHistory()
 }
 
-watch(historyLimit, () => {
-  if (selectedJob.value) {
-    loadRunHistory(selectedJob.value).catch((error) => {
-      console.error('刷新执行历史失败', error)
-    })
+const openLogDialog = (row) => {
+  logDialog.value.visible = true
+  logDialog.value.row = row
+  logDialog.value.content = row?.result || '暂无日志内容'
+}
+
+watch(
+  () => [historyStatus.value, historyPagination.value.page_size],
+  async () => {
+    if (!selectedJob.value) return
+    historyPagination.value.page = 1
+    await loadRunHistory()
   }
-})
+)
 
 onMounted(() => {
-  loadJobs().catch((error) => {
+  loadJobs(false).catch((error) => {
     console.error('加载定时任务失败', error)
   })
-  window.addEventListener('global-refresh', onGlobalRefresh)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('global-refresh', onGlobalRefresh)
 })
 </script>
 
@@ -512,7 +390,7 @@ onBeforeUnmount(() => {
 
 .scheduler-grid {
   display: grid;
-  grid-template-columns: minmax(360px, 44%) minmax(0, 56%);
+  grid-template-columns: minmax(360px, 43%) minmax(0, 57%);
   gap: 16px;
 }
 
@@ -529,6 +407,10 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.history-header {
+  flex-wrap: wrap;
+}
+
 .count-text {
   color: var(--muted);
   font-size: 12px;
@@ -540,14 +422,38 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.inner-alert {
-  margin-bottom: 12px;
-}
-
 .log-summary {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
+}
+
+.pagination-wrap {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.log-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.log-content {
+  margin: 0;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #fafafa;
+  color: #303133;
 }
 
 :deep(.el-table__row) {

@@ -9,7 +9,7 @@
       <div class="git-content">
         <div class="git-header">
           <span class="git-action">{{ flow.action || '流转' }}</span>
-          <span class="git-time">{{ formatTime(flow.timestamp) }}</span>
+          <span class="git-time">{{ formatTime(resolveFlowTime(flow)) }}</span>
         </div>
 
         <div class="git-actors">
@@ -37,6 +37,8 @@ const props = defineProps({
     default: () => [],
   },
 })
+
+const resolveFlowTime = (flow) => flow?.timestamp || flow?.created_at || null
 
 const formatTime = (value) => (value ? new Date(value).toLocaleString('zh-CN') : '-')
 
